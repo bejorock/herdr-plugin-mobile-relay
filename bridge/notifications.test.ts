@@ -399,7 +399,7 @@ describe("makeNotifySink", () => {
         return sent.length === 1 ? first : Promise.resolve();
       },
     };
-    const sink = makeNotifySink(push, { isMuted: () => false }, "herdr-control:herd");
+    const sink = makeNotifySink(push, { isMuted: () => false }, "rad-herdr-mobile-relay:herd");
     sink.render(summary);
     sink.render({ ...summary, title: "2 agents need you", renotify: true });
     sink.render({ ...summary, title: "codex needs you", renotify: false });

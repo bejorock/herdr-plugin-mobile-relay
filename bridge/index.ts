@@ -15,7 +15,7 @@ import {
 import { NotifyPrefsStore } from "./notify-prefs.ts";
 import { ensurePrivateDirectory } from "./private-fs.ts";
 import { Push, PushDeliveryQueue } from "./push.ts";
-import { startServer } from "./server.ts";
+import { startServer, stopAcpHooks } from "./server.ts";
 import {
   deriveConfigRoot,
   herdTagFor,
@@ -76,11 +76,11 @@ const updateStore = new UpdateStateStore(cfg);
 await updateStore.load();
 
 // Release checks are opt-in for forks. Leaving COLLIE_UPDATE_REPO empty avoids reporting Collie
-// releases as Herdr Control updates while this project has no canonical release repository.
+// releases as Herdr Mobile Relay updates while this project has no canonical release repository.
 const updateRepo = process.env.COLLIE_UPDATE_REPO?.trim() || "";
 const updateMonitor = new UpdateMonitor({
   enabled: Boolean(updateRepo),
-  repo: updateRepo || "local/herdr-control",
+  repo: updateRepo || "local/rad-herdr-mobile-relay",
   current: currentVersion,
   startupStamp: bridgeStampSync(bridgeDir, rootDir),
   fetchReleaseTags: updateRepo ? githubReleasesFetcher(updateRepo) : async () => [],
@@ -92,14 +92,14 @@ const updateMonitor = new UpdateMonitor({
   notify: (latest) =>
     updatePushQueue.enqueue({
       type: "update",
-      tag: "herdr-control:update",
+      tag: "rad-herdr-mobile-relay:update",
       // No command in the body — the tap opens Settings (target below), and the update banner / linked
       // release page carry the location-independent Herdr actions. Keeps this off the cwd-dependent path.
-      title: "Herdr Control update available",
+      title: "Herdr Mobile Relay update available",
       body: `Version ${latest} is available`,
       target: "settings",
     }),
-  clear: () => updatePushQueue.enqueue({ type: "clear", tag: "herdr-control:update" }),
+  clear: () => updatePushQueue.enqueue({ type: "clear", tag: "rad-herdr-mobile-relay:update" }),
 });
 updateMonitor.reconcileStartupNotification();
 
@@ -227,6 +227,10 @@ const sweepTimer = setInterval(() => {
 }, SWEEP_INTERVAL_MS);
 sweepTimer.unref();
 
+if (cfg.acp) {
+  console.log("[acp] experimental ACP v2 WebSocket endpoint enabled at /acp (discovery/resume only)");
+}
+
 const server = startServer({
   cfg,
   registry,
@@ -236,6 +240,7 @@ const server = startServer({
   updateMonitor,
   audit,
   liveUpdates,
+  version: currentVersion,
 });
 
 const shutdown = async () => {
@@ -243,6 +248,7 @@ const shutdown = async () => {
   // Stop accepting new connections and let in-flight requests drain briefly (non-forced stop)
   // before we tear down the poll loops and exit.
   await server.stop();
+  await stopAcpHooks(server);
   liveUpdates.closeAll();
   stopSnoozeResume();
   clearInterval(refreshTimer);

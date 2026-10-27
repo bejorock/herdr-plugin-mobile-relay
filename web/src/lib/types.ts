@@ -99,6 +99,7 @@ export type UploadResponse = { ok: true; path: string } | { ok: false; error: st
 export interface BridgeConfig {
   push: boolean;
   vapidPublicKey: string;
+  acp?: boolean;
   build?: string;
 }
 

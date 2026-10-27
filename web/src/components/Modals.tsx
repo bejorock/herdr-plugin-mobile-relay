@@ -311,7 +311,7 @@ export function SettingsModal({
           </span>
           <span className="settings-update-actions">
             {update?.releaseAvailable && update.latestUrl && (
-              <a href={update.latestUrl} target="_blank" rel="noreferrer" title={`Open Herdr Control ${update.latest} release`}>
+              <a href={update.latestUrl} target="_blank" rel="noreferrer" title={`Open Herdr Mobile Relay ${update.latest} release`}>
                 <ExternalLink />
               </a>
             )}

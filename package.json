@@ -1,6 +1,6 @@
 {
-  "name": "herdr-control",
-  "version": "0.1.0",
+  "name": "rad-herdr-mobile-relay",
+  "version": "1.0.0",
   "private": true,
   "license": "MIT",
   "type": "module",
@@ -21,5 +21,9 @@
   },
   "optionalDependencies": {
     "web-push": "^3.6.7"
+  },
+  "dependencies": {
+    "@agentclientprotocol/sdk": "2.0.2",
+    "zod": "^4.0.0"
   }
 }

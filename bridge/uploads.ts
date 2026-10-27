@@ -1,6 +1,8 @@
 import { readdir, stat, unlink } from "node:fs/promises";
 import { join } from "node:path";
 
+import { ensurePrivateDirectory, writePrivateFile } from "./private-fs.ts";
+
 // Uploaded images (server.ts uploadPane → `<stateDir>/uploads/`) are referenced by path in a
 // message and then never needed again, so nothing deletes them. This sweep prunes anything older
 // than the TTL. The decision — which names are stale — is a pure, tested function; the runner that
@@ -10,6 +12,35 @@ import { join } from "node:path";
 export const UPLOAD_TTL_MS = 48 * 60 * 60 * 1000; // 48 h
 /** How often the runner re-sweeps after the startup pass. */
 export const SWEEP_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6 h
+export const MAX_IMAGE_UPLOAD_BYTES = 10 * 1024 * 1024;
+
+const IMAGE_EXT: Record<string, string> = {
+  "image/png": "png",
+  "image/jpeg": "jpg",
+  "image/webp": "webp",
+  "image/gif": "gif",
+};
+
+/** Save an already validated image payload as an owner-only, server-named host file. */
+export async function savePrivateImageUpload(input: {
+  stateDir: string;
+  paneId: string;
+  mimeType: string;
+  bytes: Uint8Array;
+}): Promise<string> {
+  const ext = IMAGE_EXT[input.mimeType];
+  if (!ext) throw new Error(`unsupported image type: ${input.mimeType || "unknown"}`);
+  if (input.bytes.byteLength === 0 || input.bytes.byteLength > MAX_IMAGE_UPLOAD_BYTES) {
+    throw new Error("image too large (max 10 MB)");
+  }
+  const dir = join(input.stateDir, "uploads");
+  await ensurePrivateDirectory(dir);
+  const safePane = input.paneId.replace(/[^A-Za-z0-9_-]/g, "_");
+  const filename = `${safePane}-${Date.now().toString(36)}-${crypto.randomUUID().slice(0, 8)}.${ext}`;
+  const path = join(dir, filename);
+  await writePrivateFile(path, input.bytes);
+  return path;
+}
 
 /** Names whose mtime is older than `ttlMs` before `now`. Pure — the whole decision, unit-tested. */
 export function filesToPrune(

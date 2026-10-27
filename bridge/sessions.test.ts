@@ -50,10 +50,10 @@ describe("sessionNameFor", () => {
 
 describe("herdTagFor", () => {
   test("the primary keeps the bare collie:herd tag", () => {
-    expect(herdTagFor(true, "default")).toBe("herdr-control:herd");
+    expect(herdTagFor(true, "default")).toBe("rad-herdr-mobile-relay:herd");
   });
   test("a non-primary session tags collie:herd:<name>", () => {
-    expect(herdTagFor(false, "collie-demo")).toBe("herdr-control:herd:collie-demo");
+    expect(herdTagFor(false, "collie-demo")).toBe("rad-herdr-mobile-relay:herd:collie-demo");
   });
 });
 

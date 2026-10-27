@@ -11,3 +11,6 @@ web/artifacts/
 .DS_Store
 *.log
 *.pid
+
+.pi-workflow/
+.pi/

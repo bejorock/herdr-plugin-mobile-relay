@@ -73,6 +73,7 @@ function cfg(overrides: Partial<Config> = {}): Config {
     vapidSubject: "mailto:admin@example.com",
     stateDir: "/tmp/state",
     multiSession: true,
+    acp: false,
     ...overrides,
   };
 }
@@ -204,6 +205,7 @@ describe("config route access", () => {
         headers: { host: "collie.example.ts.net" },
       });
       expect(response.status).toBe(403);
+      expect(response.headers.get("x-rad-herdr-mobile-relay")).toBe("rad-herdr-mobile-relay-v1");
     } finally {
       server.stop(true);
     }
@@ -212,7 +214,7 @@ describe("config route access", () => {
 
 describe("static frontend recovery", () => {
   test("returns the documented build hint when the root index is absent", async () => {
-    const response = await serveStatic("/", `/tmp/herdr-control-missing-${crypto.randomUUID()}`);
+    const response = await serveStatic("/", `/tmp/rad-herdr-mobile-relay-missing-${crypto.randomUUID()}`);
     expect(response.status).toBe(503);
     expect(await response.text()).toContain("frontend not built");
   });

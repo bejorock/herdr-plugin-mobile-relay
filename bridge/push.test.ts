@@ -261,7 +261,7 @@ describe("Push — persistence", () => {
   test("a failed persistence write does not activate the subscription in memory", async () => {
     let deliveries = 0;
     const push = new Push(
-      { ...loadConfig(), stateDir: "/dev/null/herdr-control" },
+      { ...loadConfig(), stateDir: "/dev/null/rad-herdr-mobile-relay" },
       () => {
         deliveries++;
         return Promise.resolve();
@@ -380,9 +380,9 @@ describe("Push — per-message collapse topic (update must not share the herd sl
     const push = new Push(cfg, sender);
     enable(push, [stored(sub("a"))]);
 
-    await push.send({ type: "update", tag: "herdr-control:update", title: "t", body: "b", target: "settings" });
+    await push.send({ type: "update", tag: "rad-herdr-mobile-relay:update", title: "t", body: "b", target: "settings" });
 
-    expect(sends[0]!.options).toEqual({ topic: "herdr-control-update", TTL: 259_200, timeout: 10_000 });
+    expect(sends[0]!.options).toEqual({ topic: "rad-herdr-mobile-relay-update", TTL: 259_200, timeout: 10_000 });
     expect(JSON.parse(sends[0]!.payload).data.target).toBe("settings");
   });
 
@@ -392,10 +392,10 @@ describe("Push — per-message collapse topic (update must not share the herd sl
     const push = new Push(cfg, sender);
     enable(push, [stored(sub("a"))]);
 
-    await push.send({ title: "claude needs you", body: "…", tag: "herdr-control:herd", paneId: "w1:p1" });
+    await push.send({ title: "claude needs you", body: "…", tag: "rad-herdr-mobile-relay:herd", paneId: "w1:p1" });
 
     expect(sends[0]!.options).toEqual({
-      topic: collapseTopic("herdr-control:herd"),
+      topic: collapseTopic("rad-herdr-mobile-relay:herd"),
       TTL: 21_600,
       timeout: 10_000,
     });
@@ -408,8 +408,8 @@ describe("Push — per-message collapse topic (update must not share the herd sl
     const push = new Push(cfg, sender);
     enable(push, [stored(sub("a"))]);
 
-    await push.send({ type: "clear", tag: "herdr-control:herd" });
-    expect(sends[0]!.options.topic).toBe(collapseTopic("herdr-control:herd"));
+    await push.send({ type: "clear", tag: "rad-herdr-mobile-relay:herd" });
+    expect(sends[0]!.options.topic).toBe(collapseTopic("rad-herdr-mobile-relay:herd"));
   });
 
   test("an update clear shares the update render topic and long TTL", async () => {
@@ -418,10 +418,10 @@ describe("Push — per-message collapse topic (update must not share the herd sl
     const push = new Push(cfg, sender);
     enable(push, [stored(sub("a"))]);
 
-    await push.send({ type: "clear", tag: "herdr-control:update" });
+    await push.send({ type: "clear", tag: "rad-herdr-mobile-relay:update" });
 
     expect(sends[0]!.options).toEqual({
-      topic: "herdr-control-update",
+      topic: "rad-herdr-mobile-relay-update",
       TTL: 259_200,
       timeout: 10_000,
     });
@@ -433,8 +433,8 @@ describe("Push — per-message collapse topic (update must not share the herd sl
     const push = new Push(cfg, sender);
     enable(push, [stored(sub("a"))]);
 
-    await push.send({ title: "a", tag: "herdr-control:herd:buildbox" });
-    await push.send({ title: "b", tag: "herdr-control:herd:another-very-long-session-name" });
+    await push.send({ title: "a", tag: "rad-herdr-mobile-relay:herd:buildbox" });
+    await push.send({ title: "b", tag: "rad-herdr-mobile-relay:herd:another-very-long-session-name" });
 
     expect(sends[0]!.options.topic).not.toBe(sends[1]!.options.topic);
     expect(sends[0]!.options.topic.length).toBeLessThanOrEqual(32);
@@ -445,9 +445,9 @@ describe("Push — per-message collapse topic (update must not share the herd sl
 
 describe("collapseTopic", () => {
   test("is stable, valid, and collision-resistant for long session tags", () => {
-    const first = collapseTopic("herdr-control:herd:a-very-long-session-name-alpha");
-    const second = collapseTopic("herdr-control:herd:a-very-long-session-name-beta");
-    expect(first).toBe(collapseTopic("herdr-control:herd:a-very-long-session-name-alpha"));
+    const first = collapseTopic("rad-herdr-mobile-relay:herd:a-very-long-session-name-alpha");
+    const second = collapseTopic("rad-herdr-mobile-relay:herd:a-very-long-session-name-beta");
+    expect(first).toBe(collapseTopic("rad-herdr-mobile-relay:herd:a-very-long-session-name-alpha"));
     expect(first).not.toBe(second);
     expect(first.length).toBeLessThanOrEqual(32);
     expect(first).toMatch(/^[A-Za-z0-9_-]+$/);
@@ -475,7 +475,7 @@ describe("PushDeliveryQueue", () => {
     });
 
     queue.enqueue({ type: "update", title: "Update" });
-    queue.enqueue({ type: "clear", tag: "herdr-control:update" });
+    queue.enqueue({ type: "clear", tag: "rad-herdr-mobile-relay:update" });
     await Promise.resolve();
     expect(delivered).toEqual(["update"]);
     releaseRender();

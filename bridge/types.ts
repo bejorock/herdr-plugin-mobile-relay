@@ -8,6 +8,18 @@ export type AgentStatus = "idle" | "working" | "blocked" | "done" | "unknown";
  * triage home), but also a bare **shell** pane (`kind:"shell"`, `agent:"shell"`) once we surface
  * those so a freshly-created tab/space is reachable and you can launch your own agent in it.
  */
+/**
+ * A native agent-session reference reported by Herdr's installed integration. `value` can be a
+ * native session id or an absolute transcript path, so it remains bridge-internal and is never
+ * included in the public REST snapshot by default.
+ */
+export interface NativeAgentSessionRef {
+  source: string;
+  agent: string;
+  kind: "id" | "path";
+  value: string;
+}
+
 export interface AgentView {
   paneId: string;
   workspaceId: string;
@@ -20,6 +32,8 @@ export interface AgentView {
   focused: boolean;
   /** "agent" for an agent-bearing pane, "shell" for a bare shell. Defaults to "agent" when absent. */
   kind?: "agent" | "shell";
+  /** Internal native-session binding used by ACP adapters; deliberately omitted from REST responses. */
+  nativeSession?: NativeAgentSessionRef;
 }
 
 /** A Herdr workspace ("space") — a project-scoped container of tabs. From `workspace.list`. */
@@ -133,7 +147,7 @@ export interface UpdateStatus {
   latestUrl: string | null;
   /** `latest` is strictly newer than `current`. */
   releaseAvailable: boolean;
-  /** The running process is behind the on-disk bridge source — restart the herdr-control service. */
+  /** The running process is behind the on-disk bridge source — restart the rad-herdr-mobile-relay service. */
   bridgeStale: boolean;
   /** When the upstream check last completed (epoch ms), or null if it hasn't run yet. */
   checkedAt: number | null;
@@ -247,6 +261,8 @@ export type WorktreeCreateResponse =
 export interface BridgeConfig {
   push: boolean;
   vapidPublicKey: string;
+  /** Whether the experimental ACP v2 WebSocket endpoint is enabled. */
+  acp?: boolean;
   /** Build id of the bundle the bridge is currently serving (for stale-cache detection). */
   build?: string;
 }

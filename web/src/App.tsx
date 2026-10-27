@@ -144,7 +144,7 @@ export default function App() {
         ) : update?.releaseAvailable ? (
           <div className="update-banner" role="status">
             <RefreshCw />
-            <span>Herdr Control {update.latest} is available.</span>
+            <span>Herdr Mobile Relay {update.latest} is available.</span>
             {update.latestUrl && (
               <a href={update.latestUrl} target="_blank" rel="noreferrer">
                 View release

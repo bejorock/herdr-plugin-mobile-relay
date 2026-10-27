@@ -1,6 +1,6 @@
 {
-  "name": "herdr-control-web",
-  "version": "0.1.0",
+  "name": "rad-herdr-mobile-relay-web",
+  "version": "1.0.0",
   "private": true,
   "license": "MIT",
   "type": "module",

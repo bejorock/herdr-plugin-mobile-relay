@@ -324,7 +324,7 @@ describe("UpdateMonitor", () => {
 
 describe("UpdateStateStore", () => {
   it("does not poison the in-memory marker when persistence fails", async () => {
-    const store = new UpdateStateStore({ stateDir: "/dev/null/herdr-control" } as Config);
+    const store = new UpdateStateStore({ stateDir: "/dev/null/rad-herdr-mobile-relay" } as Config);
 
     await expect(store.setLastNotified("0.12.0")).rejects.toBeDefined();
     expect(store.lastNotified()).toBeNull();

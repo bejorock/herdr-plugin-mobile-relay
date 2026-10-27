@@ -160,13 +160,15 @@ export interface Config {
    * already-discovered session; they never build a filesystem path.
    */
   multiSession: boolean;
+  /** Enables the experimental ACP v2 WebSocket endpoint. Off by default until hooks/adapters are configured. */
+  acp: boolean;
 }
 
 export function loadConfig(): Config {
   const stateDir =
     process.env.HERDR_PLUGIN_STATE_DIR ??
     process.env.COLLIE_STATE_DIR ??
-    join(homedir(), ".local", "state", "herdr-control");
+    join(homedir(), ".local", "state", "rad-herdr-mobile-relay");
 
   const submitKeys = envList("COLLIE_SUBMIT_KEYS");
   const requestedHost = (process.env.COLLIE_HOST ?? "127.0.0.1").trim();
@@ -203,5 +205,6 @@ export function loadConfig(): Config {
     vapidSubject: process.env.COLLIE_VAPID_SUBJECT ?? "mailto:admin@example.com",
     stateDir,
     multiSession: envBool("COLLIE_MULTI_SESSION", true),
+    acp: envBool("COLLIE_ACP", false),
   };
 }

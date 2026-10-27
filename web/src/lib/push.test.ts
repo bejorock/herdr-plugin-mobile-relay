@@ -129,7 +129,7 @@ describe("disablePush", () => {
 
     await expect(disablePush()).resolves.toBeUndefined();
     expect(unsubscribe).toHaveBeenCalledOnce();
-    expect(setItem).toHaveBeenCalledWith("herdr-control:push-disabled", "1");
+    expect(setItem).toHaveBeenCalledWith("rad-herdr-mobile-relay:push-disabled", "1");
     expect(removeItem).not.toHaveBeenCalled();
   });
 
@@ -156,7 +156,7 @@ describe("disablePush", () => {
     vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(new Response(null, { status: 204 }))));
 
     await expect(disablePush()).resolves.toBeUndefined();
-    expect(setItem).toHaveBeenCalledWith("herdr-control:push-disabled", "1");
+    expect(setItem).toHaveBeenCalledWith("rad-herdr-mobile-relay:push-disabled", "1");
   });
 
   it("does not claim opt-out when both bridge deletion and local unsubscribe fail", async () => {

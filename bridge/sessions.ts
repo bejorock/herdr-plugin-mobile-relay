@@ -23,7 +23,7 @@ import type { SessionSummary } from "./types.ts";
 /** The default session's name — the one whose socket is `<configRoot>/herdr.sock`. */
 export const DEFAULT_SESSION_NAME = "default";
 /** The base notification tag; the whole herd of one session shares this slot. */
-const HERD_TAG_BASE = "herdr-control:herd";
+const HERD_TAG_BASE = "rad-herdr-mobile-relay:herd";
 
 /**
  * The herd notification tag for a session. The primary keeps the bare `collie:herd` (so

@@ -16,6 +16,12 @@ interface FakePane {
   cwd?: string | null;
   foreground_cwd?: string | null;
   agent?: string | null;
+  agent_session?: {
+    source: string;
+    agent: string;
+    kind: "id" | "path";
+    value: string;
+  } | null;
   agent_status: AgentStatus;
   revision: number;
 }
@@ -236,6 +242,30 @@ describe("StateEngine — snapshot shaping", () => {
     expect(snap.shellPanes.map((a) => a.paneId)).toEqual(["w1:p2"]);
     expect(snap.shellPanes[0]!.agent).toBe("shell");
     expect(snap.bridge).toBe("connected");
+  });
+
+  test("retains Herdr-native session references for private adapter binding", async () => {
+    const { herdr, engine, poll } = makeEngine();
+    herdr.panes = [
+      {
+        ...pane("w1:p1", "w1", "idle", "pi"),
+        agent_session: {
+          source: "herdr:pi",
+          agent: "pi",
+          kind: "path",
+          value: "/home/you/.pi/agent/sessions/project/session.jsonl",
+        },
+      },
+    ];
+
+    await poll();
+
+    expect(engine.current().agents[0]!.nativeSession).toEqual({
+      source: "herdr:pi",
+      agent: "pi",
+      kind: "path",
+      value: "/home/you/.pi/agent/sessions/project/session.jsonl",
+    });
   });
 
   test("preserves Herdr's authoritative tab order instead of sorting by public number", async () => {

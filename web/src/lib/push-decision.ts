@@ -24,7 +24,7 @@ export type PushDecision =
     };
 
 export const tagFor = (paneId?: string): string =>
-  paneId ? `herdr-control:${paneId}` : "herdr-control";
+  paneId ? `rad-herdr-mobile-relay:${paneId}` : "rad-herdr-mobile-relay";
 
 export function visibleClientShowsSession(clientUrl: string, session?: string): boolean {
   try {
@@ -97,7 +97,7 @@ export function decidePush(payload: PushPayload, _hasVisibleClient: boolean): Pu
   if (payload.type === "clear") return { kind: "clear", tag };
   return {
     kind: "show",
-    title: payload.title ?? "Herdr Control",
+    title: payload.title ?? "Herdr Mobile Relay",
     body: payload.body ?? "",
     tag,
     paneId,

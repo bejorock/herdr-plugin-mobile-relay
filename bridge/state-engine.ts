@@ -174,6 +174,16 @@ export class StateEngine {
           cwd: normalizedPaneCwd(p),
           focused: p.focused,
           kind,
+          ...(p.agent_session
+            ? {
+                nativeSession: {
+                  source: p.agent_session.source,
+                  agent: p.agent_session.agent,
+                  kind: p.agent_session.kind,
+                  value: p.agent_session.value,
+                },
+              }
+            : {}),
         };
       };
 

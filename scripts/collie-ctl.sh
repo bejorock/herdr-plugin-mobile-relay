@@ -1,22 +1,22 @@
 #!/usr/bin/env bash
-# Control script for Herdr Control. Invoked by the plugin's actions and usable directly.
+# Control script for Herdr Mobile Relay. Invoked by the plugin's actions and usable directly.
 # The bridge runs as a systemd user service on Linux or a launchd user agent on macOS (NOT a Herdr
 # plugin pane — see ARCHITECTURE.md §3), so it survives Herdr restarts and is supervised independently.
 set -euo pipefail
 
 PLUGIN_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-UNIT="herdr-control"
+UNIT="rad-herdr-mobile-relay"
 UNIT_FILE="${HOME}/.config/systemd/user/${UNIT}.service"
-LAUNCHD_LABEL="dev.herdr.control"
+LAUNCHD_LABEL="dev.rad.herdr-mobile-relay"
 LAUNCHD_FILE="${HOME}/Library/LaunchAgents/${LAUNCHD_LABEL}.plist"
-PLUGIN_ID="herdr.control"
+PLUGIN_ID="rad.herdr-mobile-relay"
 
 # Resolve the plugin config dir (where .env lives) the SAME way no matter how we're launched.
 # Herdr injects HERDR_PLUGIN_CONFIG_DIR when it runs our actions, but a direct `collie-ctl.sh` call
 # doesn't get it — so we ask Herdr for the canonical path (`herdr plugin config-dir`, plain text).
-# Without this, the two entry points read DIFFERENT .env files (Herdr's dir vs a ~/.config/herdr-control
+# Without this, the two entry points read DIFFERENT .env files (Herdr's dir vs a ~/.config/rad-herdr-mobile-relay
 # fallback), so a setting like COLLIE_SERVE_MODE applied one way and was silently ignored the other.
-# Order: injected env → Herdr CLI → Herdr's conventional path (if it has a .env) → ~/.config/herdr-control.
+# Order: injected env → Herdr CLI → Herdr's conventional path (if it has a .env) → ~/.config/rad-herdr-mobile-relay.
 resolve_config_dir() {
   if [ -n "${HERDR_PLUGIN_CONFIG_DIR:-}" ]; then echo "$HERDR_PLUGIN_CONFIG_DIR"; return; fi
   if command -v herdr >/dev/null; then
@@ -25,7 +25,7 @@ resolve_config_dir() {
   fi
   local conventional="${HOME}/.config/herdr/plugins/config/${PLUGIN_ID}"
   if [ -f "${conventional}/.env" ]; then echo "$conventional"; return; fi
-  echo "${HOME}/.config/herdr-control"
+  echo "${HOME}/.config/rad-herdr-mobile-relay"
 }
 CONFIG_DIR="$(resolve_config_dir)"
 
@@ -50,7 +50,7 @@ export HERDR_PLUGIN_STATE_DIR="$PLUGIN_STATE_DIR"
 
 # If a legacy Collie env exists, make the split explicit rather than silently sharing credentials.
 if [ "$CONFIG_DIR" != "${HOME}/.config/collie" ] && [ -f "${HOME}/.config/collie/.env" ]; then
-  echo "note: Collie's ${HOME}/.config/collie/.env is not reused; Herdr Control config lives in ${CONFIG_DIR}/.env." >&2
+  echo "note: Collie's ${HOME}/.config/collie/.env is not reused; Herdr Mobile Relay config lives in ${CONFIG_DIR}/.env." >&2
 fi
 
 # Source the plugin .env so both this script and the systemd unit share one config source.
@@ -81,7 +81,7 @@ SOCKET="${HERDR_SOCKET_PATH:-${HOME}/.config/herdr/herdr.sock}"
 # server) or "http" (plain HTTP over the tailnet — use this on Headscale / .internal domains).
 SERVE_MODE_RAW="$(printf '%s' "${COLLIE_SERVE_MODE:-https}" | tr '[:upper:]' '[:lower:]')"
 if [ "$SERVE_MODE_RAW" = "http" ]; then SERVE_MODE="http"; else SERVE_MODE="https"; fi
-# Use a dedicated public listener by default so Herdr Control does not replace an existing :443
+# Use a dedicated public listener by default so Herdr Mobile Relay does not replace an existing :443
 # Serve mapping. Set 443 explicitly when this app should own the root MagicDNS URL.
 SERVE_PORT="$(normalize_port "${COLLIE_SERVE_PORT:-$PORT}" "$PORT")"
 BUN="$(command -v bun || true)"
@@ -215,7 +215,7 @@ resolved_public_hosts() {
   fi
 }
 
-# The version Herdr Control is actually serving — read from the built bundle's stamp
+# The version Herdr Mobile Relay is actually serving — read from the built bundle's stamp
 # (web/dist/build-info.json, the same id the PWA footer and /api/config report), e.g. "0.16.0+3441656".
 # Falls back to the manifest version (tagged "web not built") when web/dist doesn't exist yet. This is
 # the authoritative "what's running", unlike Herdr's registry value which is cached at link time.
@@ -243,7 +243,7 @@ bridge_probe_once() {
         signal: controller.signal,
       });
       process.exit(
-        response.status === 200 && response.headers.get("x-herdr-control") === "herdr-control-v1"
+        response.status === 200 && response.headers.get("x-rad-herdr-mobile-relay") === "rad-herdr-mobile-relay-v1"
           ? 0
           : 1,
       );
@@ -274,17 +274,17 @@ print_status_banner() {
     svc="systemd --user (${UNIT}) · $(systemctl --user is-active "$UNIT" 2>/dev/null || echo unknown)"
   elif have_launchd && launchctl print "$(launchd_domain)/${LAUNCHD_LABEL}" >/dev/null 2>&1; then
     svc="launchd user agent (${LAUNCHD_LABEL}) · loaded"
-  elif [ -f "${CONFIG_DIR}/herdr-control.pid" ]; then
-    svc="pid $(cat "${CONFIG_DIR}/herdr-control.pid" 2>/dev/null) (no systemd)"
+  elif [ -f "${CONFIG_DIR}/rad-herdr-mobile-relay.pid" ]; then
+    svc="pid $(cat "${CONFIG_DIR}/rad-herdr-mobile-relay.pid" 2>/dev/null) (no systemd)"
   else
     svc="not supervised"
   fi
   local ver; ver="$(collie_version)"
   echo
   if bridge_ready; then
-    echo "  ✓ Herdr Control is running  ·  v${ver}"
+    echo "  ✓ Herdr Mobile Relay is running  ·  v${ver}"
   else
-    echo "  ⚠ Herdr Control isn't answering on :${PORT} yet (v${ver}) — check 'collie-ctl.sh logs'"
+    echo "  ⚠ Herdr Mobile Relay isn't answering on :${PORT} yet (v${ver}) — check 'collie-ctl.sh logs'"
   fi
   echo "    service   ${svc}"
   echo "    local     http://127.0.0.1:${PORT}"
@@ -304,7 +304,7 @@ write_launchd_agent() {
   config_escaped="$(plist_escape_value "$CONFIG_DIR")"
   state_escaped="$(plist_escape_value "$PLUGIN_STATE_DIR")"
   hosts_escaped="$(plist_escape_value "$(resolved_public_hosts)")"
-  log_escaped="$(plist_escape_value "${CONFIG_DIR}/herdr-control.log")"
+  log_escaped="$(plist_escape_value "${CONFIG_DIR}/rad-herdr-mobile-relay.log")"
   cat > "$LAUNCHD_FILE" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -349,7 +349,7 @@ write_unit() {
   fi
   cat > "$UNIT_FILE" <<EOF
 [Unit]
-Description=Herdr Control
+Description=Herdr Mobile Relay
 After=default.target
 # Never give up restarting — a phone-only operator can't run 'systemctl reset-failed'.
 StartLimitIntervalSec=0
@@ -396,7 +396,7 @@ cmd_start() {
     # Last-resort fallback for platforms with neither systemd user services nor launchd.
     mkdir -p "$CONFIG_DIR"
     [ -n "$BUN" ] || { echo "error: bun not found" >&2; exit 1; }
-    local pidfile="${CONFIG_DIR}/herdr-control.pid" existing_pid=""
+    local pidfile="${CONFIG_DIR}/rad-herdr-mobile-relay.pid" existing_pid=""
     if [ -f "$pidfile" ]; then existing_pid="$(cat "$pidfile" 2>/dev/null || true)"; fi
     if pid_is_bridge "$existing_pid"; then
       echo "bridge already running (pid ${existing_pid}, no systemd)"
@@ -407,11 +407,11 @@ cmd_start() {
       fi
       rm -f "$pidfile"
       HERDR_SOCKET_PATH="$SOCKET" COLLIE_PORT="$PORT" COLLIE_PUBLIC_HOSTS="$(resolved_public_hosts)" HERDR_PLUGIN_CONFIG_DIR="$CONFIG_DIR" \
-        nohup "$BUN" run "${PLUGIN_ROOT}/bridge/index.ts" >>"${CONFIG_DIR}/herdr-control.log" 2>&1 &
+        nohup "$BUN" run "${PLUGIN_ROOT}/bridge/index.ts" >>"${CONFIG_DIR}/rad-herdr-mobile-relay.log" 2>&1 &
       local new_pid=$!
       sleep 0.2
       if ! pid_is_bridge "$new_pid"; then
-        echo "error: bridge failed to stay running; see ${CONFIG_DIR}/herdr-control.log" >&2
+        echo "error: bridge failed to stay running; see ${CONFIG_DIR}/rad-herdr-mobile-relay.log" >&2
         exit 1
       fi
       printf '%s\n' "$new_pid" > "$pidfile"
@@ -419,7 +419,7 @@ cmd_start() {
     fi
   fi
   if ! bridge_ready; then
-    echo "error: Herdr Control did not pass its HTTP readiness probe; refusing to publish :${PORT} through Tailscale" >&2
+    echo "error: Herdr Mobile Relay did not pass its HTTP readiness probe; refusing to publish :${PORT} through Tailscale" >&2
     return 1
   fi
   cmd_serve
@@ -446,8 +446,8 @@ cmd_stop() {
     # Leaving a RunAtLoad plist behind would silently restart this remote-access service at login.
     # `start` always regenerates it, so removal is the durable launchd equivalent of systemd disable.
     rm -f "$LAUNCHD_FILE"
-  elif [ -f "${CONFIG_DIR}/herdr-control.pid" ]; then
-    local pid; pid="$(cat "${CONFIG_DIR}/herdr-control.pid" 2>/dev/null || true)"
+  elif [ -f "${CONFIG_DIR}/rad-herdr-mobile-relay.pid" ]; then
+    local pid; pid="$(cat "${CONFIG_DIR}/rad-herdr-mobile-relay.pid" 2>/dev/null || true)"
     if pid_is_bridge "$pid"; then
       if ! stop_bridge_pid "$pid"; then
         echo "error: bridge process ${pid} did not exit; keeping pidfile" >&2
@@ -456,7 +456,7 @@ cmd_stop() {
     elif [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
       echo "warning: pidfile points to a different live process (${pid}); not killing it" >&2
     fi
-    rm -f "${CONFIG_DIR}/herdr-control.pid"
+    rm -f "${CONFIG_DIR}/rad-herdr-mobile-relay.pid"
   fi
   echo "bridge stopped"
 }
@@ -464,9 +464,9 @@ cmd_stop() {
 cmd_restart() { cmd_stop; cmd_start; }
 
 # Tear the service down completely (the inverse of `start`): stop + disable it, remove the
-# systemd/launchd user service, remove Herdr Control's tailscale serve mapping, and drop the pidfile. Deliberately leaves your
+# systemd/launchd user service, remove Herdr Mobile Relay's tailscale serve mapping, and drop the pidfile. Deliberately leaves your
 # config (${CONFIG_DIR}/.env) and the on-disk checkout in place — `uninstall` removes only what
-# `start` created. To remove the plugin registration too, run `herdr plugin uninstall herdr.control`
+# `start` created. To remove the plugin registration too, run `herdr plugin uninstall rad.herdr-mobile-relay`
 # (or, for a linked clone, just delete the checkout).
 cmd_uninstall() {
   cmd_stop
@@ -477,8 +477,8 @@ cmd_uninstall() {
     systemctl --user reset-failed "$UNIT" 2>/dev/null || true
   fi
   if have_launchd; then rm -f "$LAUNCHD_FILE"; fi
-  rm -f "${CONFIG_DIR}/herdr-control.pid"
-  echo "✓ uninstalled: service stopped & disabled, service definition removed, Herdr Control's tailscale serve mapping removed"
+  rm -f "${CONFIG_DIR}/rad-herdr-mobile-relay.pid"
+  echo "✓ uninstalled: service stopped & disabled, service definition removed, Herdr Mobile Relay's tailscale serve mapping removed"
   echo "  kept: ${CONFIG_DIR}/.env and the checkout — delete those to remove every trace"
 }
 
@@ -490,7 +490,7 @@ managed_reinstall_command() {
     process.stdin.on("data", (chunk) => raw += chunk).on("end", () => {
       try {
         const envelope = JSON.parse(raw);
-        const plugin = envelope?.result?.plugins?.find((entry) => entry.plugin_id === "herdr.control");
+        const plugin = envelope?.result?.plugins?.find((entry) => entry.plugin_id === "rad.herdr-mobile-relay");
         const source = plugin?.source;
         if (!source?.owner || !source?.repo) return;
         const quote = (value) => `'${String(value).replaceAll("'", "'\\''")}'`;
@@ -516,7 +516,7 @@ cmd_update() {
     echo "  ${reinstall}" >&2
     return 1
   fi
-  echo "updating Herdr Control (git pull --ff-only)…"
+  echo "updating Herdr Mobile Relay (git pull --ff-only)…"
   git -C "$PLUGIN_ROOT" pull --ff-only
   exec bash "${PLUGIN_ROOT}/scripts/collie-ctl.sh" _apply-update
 }
@@ -634,16 +634,16 @@ remove_listener_record() {
   local removal_status=0
   remove_owned_listener "$mode" "$port" "$target" || removal_status=$?
   if [ "$removal_status" = "3" ]; then
-    echo "tailscale serve: recorded :${port} mapping is no longer owned by Herdr Control; leaving it untouched"
+    echo "tailscale serve: recorded :${port} mapping is no longer owned by Herdr Mobile Relay; leaving it untouched"
     rm -f "$record_file"
     return 0
   fi
   if [ "$removal_status" = "0" ]; then
-    echo "tailscale serve: removed Herdr Control's recorded ${mode} :${port} mapping"
+    echo "tailscale serve: removed Herdr Mobile Relay's recorded ${mode} :${port} mapping"
     rm -f "$record_file"
     return 0
   fi
-  echo "warning: could not remove recorded Herdr Control serve mapping; keeping its record for retry" >&2
+  echo "warning: could not remove recorded Herdr Mobile Relay serve mapping; keeping its record for retry" >&2
   return 1
 }
 
@@ -718,7 +718,7 @@ cmd_serve() {
         return 1
       fi
     else
-      echo "error: existing :${old_port} listener is not verifiably owned by Herdr Control; refusing protocol replacement" >&2
+      echo "error: existing :${old_port} listener is not verifiably owned by Herdr Mobile Relay; refusing protocol replacement" >&2
       return 1
     fi
   fi
@@ -759,7 +759,7 @@ cmd_serve() {
       if "$TAILSCALE" serve --bg "--${old_mode}=${old_port}" "$old_target" >/dev/null 2>&1; then
         echo "tailscale serve: restored previous ${old_mode} :${old_port} mapping after replacement failed"
       else
-        echo "warning: failed to restore previous Herdr Control serve mapping" >&2
+        echo "warning: failed to restore previous Herdr Mobile Relay serve mapping" >&2
       fi
     fi
     return 1
@@ -771,7 +771,7 @@ cmd_serve() {
     local old_removal_status=0
     remove_owned_listener "$old_mode" "$old_port" "$old_target" || old_removal_status=$?
     if [ "$old_removal_status" = "0" ]; then
-      echo "tailscale serve: removed Herdr Control's previous ${old_mode} :${old_port} mapping"
+      echo "tailscale serve: removed Herdr Mobile Relay's previous ${old_mode} :${old_port} mapping"
     elif [ "$old_removal_status" = "3" ]; then
       echo "tailscale serve: previous :${old_port} mapping now belongs to another app; leaving it untouched"
     else
@@ -792,7 +792,7 @@ cmd_serve() {
   rm -f "$SERVE_EXTRA_LISTENER_FILE"
 }
 
-# Remove ONLY Herdr Control's tailscale serve mapping — the inverse of cmd_serve, NOT a blanket
+# Remove ONLY Herdr Mobile Relay's tailscale serve mapping — the inverse of cmd_serve, NOT a blanket
 # `tailscale serve reset` (which would wipe every unrelated mapping on the host). We turn off
 # exactly the listener cmd_serve recorded after its last successful setup. Best-effort teardown stays
 # idempotent when the mapping is already gone.
@@ -816,9 +816,9 @@ cmd_unserve() {
     remove_listener_record "$SERVE_EXTRA_LISTENER_FILE" || removed=0
   fi
   if [ "$removed" = "1" ]; then
-    echo "tailscale serve: Herdr Control mapping removed"
+    echo "tailscale serve: Herdr Mobile Relay mapping removed"
   else
-    echo "warning: one or more Herdr Control serve mappings remain; retry 'unserve'" >&2
+    echo "warning: one or more Herdr Mobile Relay serve mappings remain; retry 'unserve'" >&2
     return 1
   fi
 }
@@ -831,10 +831,17 @@ cmd_status() {
 
 cmd_logs() {
   if have_systemd; then journalctl --user -u "$UNIT" -n "${1:-50}" --no-pager
-  else tail -n "${1:-50}" "${CONFIG_DIR}/herdr-control.log" 2>/dev/null || echo "(no log)"; fi
+  else tail -n "${1:-50}" "${CONFIG_DIR}/rad-herdr-mobile-relay.log" 2>/dev/null || echo "(no log)"; fi
 }
 
 cmd_version() { collie_version; }
+
+# Relay ACP hooks are opt-in because installing them edits the user's agent configuration. The
+# helper only manages its own Pi extension entry and never touches Herdr/Moshi/user integrations.
+cmd_hooks() {
+  [ -n "$BUN" ] || { echo "error: bun not found on PATH" >&2; exit 1; }
+  "$BUN" run "${PLUGIN_ROOT}/scripts/acp-hooks.ts" "${1:-status}" "${2:-all}"
+}
 
 # Fire a one-off Web Push to every subscribed device — verify push end-to-end without waiting for an
 # agent to actually block. The helper calls the running bridge so subscription persistence keeps one
@@ -859,8 +866,11 @@ main() {
     url)     bridge_url ;;
     version) cmd_version ;;
     push-test) shift || true; cmd_push_test "$@" ;;
+    hooks-install) cmd_hooks install "${2:-all}" ;;
+    hooks-status) cmd_hooks status "${2:-all}" ;;
+    hooks-uninstall) cmd_hooks uninstall "${2:-all}" ;;
     logs)    cmd_logs "${2:-50}" ;;
-    *) echo "usage: collie-ctl.sh {start|stop|restart|uninstall|update|version|push-test|build|serve|unserve|status|url|logs}" >&2; return 2 ;;
+    *) echo "usage: collie-ctl.sh {start|stop|restart|uninstall|update|version|push-test|hooks-install|hooks-status|hooks-uninstall|build|serve|unserve|status|url|logs}" >&2; return 2 ;;
   esac
 }
 

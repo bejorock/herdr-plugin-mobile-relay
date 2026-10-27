@@ -13,7 +13,7 @@ export const demoSnapshot: SnapshotResponse = {
       tabId: "w1:t1",
       agent: "codex",
       status: "blocked",
-      cwd: "/Users/demo/Projects/herdr-control",
+      cwd: "/Users/demo/Projects/rad-herdr-mobile-relay",
       focused: true,
     },
     {
@@ -59,7 +59,7 @@ export const demoSnapshot: SnapshotResponse = {
       tabId: "w1:t2",
       agent: "shell",
       status: "idle",
-      cwd: "/Users/demo/Projects/herdr-control",
+      cwd: "/Users/demo/Projects/rad-herdr-mobile-relay",
       focused: false,
       kind: "shell",
     },

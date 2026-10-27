@@ -6,8 +6,13 @@ privately through Tailscale Serve.
 
 Native client repository: [Herdr Mobile](https://github.com/benkraus/herdr-mobile).
 
-The repository is packaged as a Herdr plugin. Its registered plugin ID is `herdr.control`, retained
-for compatibility with existing installations and configuration directories.
+The repository is packaged as a Herdr plugin. This fork uses the unique registered plugin ID
+`rad.herdr-mobile-relay`, so it can coexist with upstream plugins that use a different ID.
+
+> **Fork migration:** `rad.herdr-mobile-relay` deliberately uses its own plugin configuration,
+> state directory, service unit, push tags, and Tailscale Serve ownership record. It does not reuse
+> an upstream `herdr.control` installation. Install/configure this plugin separately; keep the
+> upstream plugin installed only if you intentionally want both services.
 
 ## What it provides
 
@@ -22,6 +27,8 @@ for compatibility with existing installations and configuration directories.
 - Append-only auditing of remote write operations.
 - launchd supervision on macOS and systemd user-service supervision on Linux.
 - Private tailnet publishing through Tailscale Serve.
+- An opt-in ACP v2 WebSocket adapter for structured Pi and Claude Code sessions.
+- Explicit, owner-only local Pi/Claude hook bridges for low-latency semantic updates and remote interactions.
 
 Herdr remains the source of truth. Closing a browser or mobile client does not terminate the Herdr
 server, its workspaces, terminal panes, or agents.
@@ -73,7 +80,7 @@ integration currently target launchd and systemd-style environments.
 Replace `<owner>` with the GitHub account or organization that publishes this repository:
 
 ```bash
-herdr plugin install <owner>/herdr-plugin-mobile-relay --yes
+herdr plugin install bejorock/herdr-plugin-mobile-relay --yes
 ```
 
 Herdr runs the manifest build step during installation. That step installs both Bun dependency
@@ -82,7 +89,7 @@ trees, typechecks the relay and browser client, and produces the static web bund
 Create the private configuration file before starting remote access:
 
 ```bash
-config_dir="$(herdr plugin config-dir herdr.control)"
+config_dir="$(herdr plugin config-dir rad.herdr-mobile-relay)"
 install -d -m 700 "$config_dir"
 install -m 600 .env.example "$config_dir/.env"
 ```
@@ -96,9 +103,9 @@ COLLIE_TRUSTED_USER=you@example.com
 Then start the service:
 
 ```bash
-herdr plugin action invoke start --plugin herdr.control
-herdr plugin action invoke status --plugin herdr.control
-herdr plugin action invoke url --plugin herdr.control
+herdr plugin action invoke start --plugin rad.herdr-mobile-relay
+herdr plugin action invoke status --plugin rad.herdr-mobile-relay
+herdr plugin action invoke url --plugin rad.herdr-mobile-relay
 ```
 
 The URL action prints the address to enter in Herdr Mobile, normally similar to:
@@ -115,10 +122,10 @@ terminal processes and therefore carry the authority of a remote shell.
 Clone the repository, then link it instead of installing a managed GitHub checkout:
 
 ```bash
-git clone https://github.com/<owner>/herdr-plugin-mobile-relay.git
+git clone https://github.com/bejorock/herdr-plugin-mobile-relay.git
 cd herdr-plugin-mobile-relay
 herdr plugin link "$(pwd)"
-herdr plugin action invoke start --plugin herdr.control
+herdr plugin action invoke start --plugin rad.herdr-mobile-relay
 ```
 
 Herdr does not run manifest build steps for a local link. The first `start` builds the browser client
@@ -129,7 +136,7 @@ lazily when `web/dist` is absent.
 All settings live in the plugin configuration directory returned by:
 
 ```bash
-herdr plugin config-dir herdr.control
+herdr plugin config-dir rad.herdr-mobile-relay
 ```
 
 Copy [.env.example](.env.example) to `.env` in that directory. Important settings include:
@@ -142,6 +149,8 @@ Copy [.env.example](.env.example) to `.env` in that directory. Important setting
 | `COLLIE_SERVE_PORT` | relay port | Dedicated public tailnet listener. |
 | `HERDR_SOCKET_PATH` | Herdr default socket | Override only for a nonstandard Herdr installation. |
 | `COLLIE_MULTI_SESSION` | `on` | Discover and expose named Herdr sessions. |
+| `COLLIE_ACP` | `off` | Enable the experimental ACP v2 WebSocket endpoint at `/acp`. |
+| `COLLIE_UPDATE_REPO` | unset | Optional GitHub `owner/repo` for release-update checks, e.g. `bejorock/herdr-plugin-mobile-relay`. |
 | `COLLIE_POLL_MS` | `1500` | Fast fallback polling interval. |
 | `COLLIE_POLL_IDLE_MS` | `12000` | Safety-net polling while event subscriptions are healthy. |
 | `COLLIE_READ_LINES` | `200` | Default bounded pane read size. |
@@ -205,25 +214,39 @@ Push subscriptions and preferences are stored in the private plugin state direct
 ## Plugin actions
 
 ```bash
-herdr plugin action invoke start --plugin herdr.control
-herdr plugin action invoke stop --plugin herdr.control
-herdr plugin action invoke restart --plugin herdr.control
-herdr plugin action invoke status --plugin herdr.control
-herdr plugin action invoke url --plugin herdr.control
-herdr plugin action invoke version --plugin herdr.control
-herdr plugin action invoke update --plugin herdr.control
-herdr plugin action invoke uninstall --plugin herdr.control
+herdr plugin action invoke start --plugin rad.herdr-mobile-relay
+herdr plugin action invoke stop --plugin rad.herdr-mobile-relay
+herdr plugin action invoke restart --plugin rad.herdr-mobile-relay
+herdr plugin action invoke status --plugin rad.herdr-mobile-relay
+herdr plugin action invoke url --plugin rad.herdr-mobile-relay
+herdr plugin action invoke version --plugin rad.herdr-mobile-relay
+herdr plugin action invoke update --plugin rad.herdr-mobile-relay
+herdr plugin action invoke hooks-install --plugin rad.herdr-mobile-relay
+herdr plugin action invoke hooks-status --plugin rad.herdr-mobile-relay
+herdr plugin action invoke hooks-uninstall --plugin rad.herdr-mobile-relay
+herdr plugin action invoke uninstall --plugin rad.herdr-mobile-relay
 ```
 
-`uninstall` removes the supervised service and the Serve mapping created by this plugin. It keeps
-the private `.env`, state directory, and source checkout. Remove the plugin registration separately:
+`hooks-install` is opt-in and installs only the relay's separate Pi extension and Claude relay
+hooks; it does not alter Herdr-managed, Moshi-managed, or other user extension entries. Restart Pi
+or Claude Code after installing or uninstalling it. Target one adapter directly with
+`bash scripts/collie-ctl.sh hooks-install pi` or `... hooks-install claude`. `uninstall` removes
+the supervised service and the Serve mapping created by this
+plugin. It keeps the private `.env`, state directory, and source checkout. Remove the plugin
+registration separately:
 
 ```bash
-herdr plugin uninstall herdr.control
+herdr plugin uninstall rad.herdr-mobile-relay
 ```
 
 The `update` action can update a linked branch checkout. Herdr-managed GitHub installs are pinned to
 a resolved commit; for those installations the action prints the safe uninstall/reinstall command.
+
+For update notifications from this published fork, opt in with:
+
+```dotenv
+COLLIE_UPDATE_REPO=bejorock/herdr-plugin-mobile-relay
+```
 
 ## Development
 
@@ -267,6 +290,92 @@ herdr-plugin.toml       Herdr plugin manifest
 .env.example            Documented runtime configuration
 ```
 
+## ACP agent API (experimental)
+
+Herdr Mobile Relay can additionally act as an [Agent Client Protocol (ACP) v2](https://agentclientprotocol.com/) adapter. ACP is **off by default** and uses a WebSocket-only JSON-RPC endpoint:
+
+```text
+local:  ws://127.0.0.1:8787/acp
+remote: wss://your-machine.your-tailnet.ts.net:8787/acp
+```
+
+Enable it in the private plugin configuration file, then restart the bridge:
+
+```dotenv
+COLLIE_ACP=on
+```
+
+```bash
+herdr plugin action invoke restart --plugin rad.herdr-mobile-relay
+```
+
+ACP does not replace the existing interfaces:
+
+```text
+/api/*       Herdr workspace/pane/worktree management
+/api/live    raw terminal/control WebSocket fallback
+/acp         structured ACP agent sessions
+```
+
+See [ACP WebSocket API](docs/ACP_API.md) for the wire contract, initialization example, session lifecycle, and client requirements. See the [ACP Operations Guide](docs/ACP_OPERATIONS.md) for enablement, hook lifecycle, troubleshooting, and security guidance.
+
+### What ACP supports
+
+| Agent | Supported ACP behavior |
+| --- | --- |
+| **Pi** | Session replay/tailing, proof-confirmed text and image prompts, cancellation, best-effort state/tool/text/thought updates, and explicit extension event-bus notifications/approvals/forms. |
+| **Claude Code** | Session replay/tailing, proof-confirmed text prompts, native permission decisions, `AskUserQuestion` single/multi-select, `ExitPlanMode` approval, best-effort assistant/tool/idle semantic updates, and safe terminal-local fallback when no remote client can answer. Private-path image prompting is implemented but awaits its final live smoke test after Claude quota renewal. |
+
+The relay creates opaque `herdr_…` ACP session IDs. ACP responses never disclose Herdr pane IDs, native session IDs, or host transcript/upload paths.
+
+### Enable local agent hooks explicitly
+
+ACP transcript replay and semantic prompts work without modifying agent configuration. Optional low-latency updates and native interaction mapping require relay-owned local hooks. Installation is explicit and never happens when the relay starts:
+
+```bash
+# Install both adapters.
+herdr plugin action invoke hooks-install --plugin rad.herdr-mobile-relay
+
+# Inspect current state.
+herdr plugin action invoke hooks-status --plugin rad.herdr-mobile-relay
+
+# Remove only relay-owned entries/files.
+herdr plugin action invoke hooks-uninstall --plugin rad.herdr-mobile-relay
+```
+
+To target one adapter from a checkout, use the lifecycle helper with the plugin state directory inherited from the plugin action or service:
+
+```bash
+bash scripts/collie-ctl.sh hooks-install pi
+bash scripts/collie-ctl.sh hooks-install claude
+bash scripts/collie-ctl.sh hooks-status all
+```
+
+Restart affected Pi or Claude Code sessions after an install, update, or uninstall. The installer preserves existing Herdr, Moshi, and user extensions/hooks; it removes only entries it owns.
+
+### Pi extension event bridge
+
+Pi global/native permissions are intentionally not intercepted. A Pi extension opts into remote interaction by emitting events on Pi's shared event bus:
+
+```text
+herdr-relay:publish
+herdr-relay:request-permission
+herdr-relay:request-elicitation
+herdr-relay:interaction-result
+```
+
+Forms support bounded strings, numbers, integers, booleans, single-select enums, and multi-select string arrays. The originating extension always owns the host-side action after receiving the result. See [Pi relay hook events](docs/PI_RELAY_HOOK_EVENTS.md) for payloads, response handling, and security rules.
+
+### ACP safety rules
+
+- Keep the relay loopback-only and use Tailscale Serve or an equally trusted private proxy; **never use Tailscale Funnel**.
+- Configure `COLLIE_TRUSTED_USER` for remote access and optional device allowlisting for remote writes.
+- ACP prompt delivery succeeds only after matching native transcript evidence; terminal injection acknowledgement alone is insufficient.
+- Images are written to owner-only server-generated upload files. Native prompts may receive a private path, but ACP replay redacts that path.
+- The first **valid**, write-authorized client interaction response wins. Invalid responses do not consume the request.
+- If no authorized ACP client can answer a native Claude interaction, Claude retains its terminal-local UI.
+- ACP is experimental. Treat client interoperability and agent hook contracts as versioned opt-in behavior.
+
 ## Security model
 
 - The relay always binds loopback.
@@ -286,7 +395,7 @@ Operate it only on a single-user host or an equivalently isolated environment.
 Check relay and service status:
 
 ```bash
-herdr plugin action invoke status --plugin herdr.control
+herdr plugin action invoke status --plugin rad.herdr-mobile-relay
 bash scripts/collie-ctl.sh logs 100
 ```
 
@@ -301,6 +410,9 @@ Common causes:
   terminator; PWA installation and Web Push still require a secure browser context.
 - **Port already belongs to another Serve app:** choose another `COLLIE_SERVE_PORT`; the launcher
   intentionally refuses to overwrite mappings it does not own.
+- **`/acp` returns 404 or upgrade fails:** set `COLLIE_ACP=on` in the plugin `.env`, then restart the bridge.
+- **ACP has transcript updates but no live Pi/Claude events:** explicitly install the appropriate relay hook and restart that agent session.
+- **Claude uses terminal-local permission/question/plan UI:** no write-authorized ACP client was connected, the interaction was cancelled/expired, or the hook is not installed for that session. This is fail-safe behavior.
 
 ## License
 

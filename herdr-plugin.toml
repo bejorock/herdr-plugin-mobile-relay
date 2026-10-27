@@ -1,6 +1,6 @@
-id = "herdr.control"
-name = "Herdr Control"
-version = "0.1.0"
+id = "rad.herdr-mobile-relay"
+name = "Herdr Mobile Relay"
+version = "1.0.0"
 min_herdr_version = "0.7.0"
 description = "T3 Code-style web control plane for durable Herdr sessions, served over Tailscale"
 platforms = ["linux", "macos"]
@@ -64,6 +64,24 @@ id = "status"
 title = "Bridge status"
 contexts = ["workspace"]
 command = ["bash", "scripts/collie-ctl.sh", "status"]
+
+[[actions]]
+id = "hooks-install"
+title = "Install ACP Pi and Claude hooks"
+contexts = ["workspace"]
+command = ["bash", "scripts/collie-ctl.sh", "hooks-install"]
+
+[[actions]]
+id = "hooks-status"
+title = "Show ACP hook status"
+contexts = ["workspace"]
+command = ["bash", "scripts/collie-ctl.sh", "hooks-status"]
+
+[[actions]]
+id = "hooks-uninstall"
+title = "Uninstall ACP Pi and Claude hooks"
+contexts = ["workspace"]
+command = ["bash", "scripts/collie-ctl.sh", "hooks-uninstall"]
 
 [[actions]]
 id = "version"

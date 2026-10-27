@@ -140,7 +140,7 @@ describe("NotifyPrefsStore", () => {
   test("a failed persistence attempt leaves live preferences unchanged", async () => {
     const store = new NotifyPrefsStore({
       ...loadConfig(),
-      stateDir: "/dev/null/herdr-control",
+      stateDir: "/dev/null/rad-herdr-mobile-relay",
     });
     await expect(store.set({ blocked: false })).rejects.toBeDefined();
     expect(store.current()).toEqual(DEFAULT_NOTIFY_PREFS);

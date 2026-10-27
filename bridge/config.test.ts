@@ -27,6 +27,7 @@ const KEYS = [
   "COLLIE_VAPID_SUBJECT",
   "COLLIE_STATE_DIR",
   "COLLIE_MULTI_SESSION",
+  "COLLIE_ACP",
   "HERDR_SOCKET_PATH",
   "HERDR_PLUGIN_STATE_DIR",
 ];
@@ -70,6 +71,21 @@ describe("loadConfig", () => {
     expect(cfg.deviceAllowlist).toEqual([]);
     // Multi-session support is on by default.
     expect(cfg.multiSession).toBe(true);
+    // ACP stays opt-in while the adapter/hook surface is experimental.
+    expect(cfg.acp).toBe(false);
+  });
+
+  test("parses COLLIE_ACP as an opt-in boolean toggle", () => {
+    for (const on of ["on", "1", "true", "yes", "ON", " True "]) {
+      process.env.COLLIE_ACP = on;
+      expect(loadConfig().acp).toBe(true);
+    }
+    for (const off of ["off", "0", "false", "no", "OFF", " False "]) {
+      process.env.COLLIE_ACP = off;
+      expect(loadConfig().acp).toBe(false);
+    }
+    process.env.COLLIE_ACP = "banana";
+    expect(loadConfig().acp).toBe(false);
   });
 
   test("parses COLLIE_MULTI_SESSION as a boolean toggle (default on)", () => {

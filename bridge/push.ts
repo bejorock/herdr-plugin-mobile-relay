@@ -91,7 +91,7 @@ const PUSH_DELIVERY_TIMEOUT_MS = 10_000;
 // update stays relevant far longer than a transient "needs you".
 const UPDATE_SEND_OPTIONS = {
   TTL: 259_200,
-  topic: "herdr-control-update",
+  topic: "rad-herdr-mobile-relay-update",
   timeout: PUSH_DELIVERY_TIMEOUT_MS,
 } as const;
 
@@ -107,7 +107,7 @@ export interface PushDeliverySummary {
 /** Stable bounded topic for one notification slot. Different Herdr sessions use different tags,
  * so their queued messages cannot overwrite each other while a device is offline. */
 export function collapseTopic(tag: string | undefined): string {
-  const source = tag || "herdr-control-herd";
+  const source = tag || "rad-herdr-mobile-relay-herd";
   const safe = source.replace(/[^A-Za-z0-9_-]/g, "-");
   // Even a short normalized topic needs a source hash when replacement changed it: otherwise
   // distinct session names such as `foo.bar` and `foo-bar` collapse into one offline queue slot.
@@ -287,7 +287,7 @@ export class Push {
     // share a topic, while different sessions remain independent in the offline queue.
     const options =
       msg.type === "update" ||
-      (msg.type === "clear" && msg.tag === "herdr-control:update")
+      (msg.type === "clear" && msg.tag === "rad-herdr-mobile-relay:update")
         ? UPDATE_SEND_OPTIONS
         : {
             TTL: SEND_TTL,

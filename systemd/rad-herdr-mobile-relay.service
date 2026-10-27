@@ -1,13 +1,13 @@
 # Reference systemd --user unit. `scripts/collie-ctl.sh start` generates a copy of this with
-# absolute paths filled in at ~/.config/systemd/user/herdr-control.service. Edit + use this
+# absolute paths filled in at ~/.config/systemd/user/rad-herdr-mobile-relay.service. Edit + use this
 # directly only if you prefer to manage it by hand.
 #
-#   cp systemd/herdr-control.service ~/.config/systemd/user/
+#   cp systemd/rad-herdr-mobile-relay.service ~/.config/systemd/user/
 #   (edit the @PLACEHOLDERS@ below)
-#   systemctl --user daemon-reload && systemctl --user enable --now herdr-control
+#   systemctl --user daemon-reload && systemctl --user enable --now rad-herdr-mobile-relay
 
 [Unit]
-Description=Herdr Control
+Description=Herdr Mobile Relay
 After=default.target
 # Never give up restarting — a phone-only operator can't run 'systemctl reset-failed'.
 StartLimitIntervalSec=0
@@ -26,8 +26,8 @@ PrivateTmp=yes
 Environment=HERDR_SOCKET_PATH=%h/.config/herdr/herdr.sock
 Environment=COLLIE_PORT=8787
 Environment=COLLIE_PUBLIC_HOSTS=
-Environment=HERDR_PLUGIN_CONFIG_DIR=%h/.config/herdr-control
-EnvironmentFile=-%h/.config/herdr-control/.env
+Environment=HERDR_PLUGIN_CONFIG_DIR=%h/.config/rad-herdr-mobile-relay
+EnvironmentFile=-%h/.config/rad-herdr-mobile-relay/.env
 
 [Install]
 WantedBy=default.target

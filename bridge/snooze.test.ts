@@ -140,7 +140,7 @@ describe("Snooze", () => {
 
   test("a failed save leaves the live snooze state unchanged", async () => {
     const snooze = new Snooze(
-      { ...loadConfig(), stateDir: "/dev/null/herdr-control" },
+      { ...loadConfig(), stateDir: "/dev/null/rad-herdr-mobile-relay" },
       () => 1_000,
     );
     await expect(snooze.set(10_000)).rejects.toBeDefined();

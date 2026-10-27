@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "herdr-control-web",
+      "name": "rad-herdr-mobile-relay-web",
       "dependencies": {
         "@fontsource-variable/dm-sans": "^5.2.8",
         "@fontsource/jetbrains-mono": "^5.2.8",

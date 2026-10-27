@@ -1,7 +1,7 @@
 import { fetchConfig, registerPushSubscription, unregisterPushSubscription } from "./api";
 import type { BridgeConfig } from "./types";
 
-const PREF_KEY = "herdr-control:push-disabled";
+const PREF_KEY = "rad-herdr-mobile-relay:push-disabled";
 
 export type PushAvailability = "unsupported" | "insecure" | "server-off" | "denied" | "ready";
 export interface PushState {

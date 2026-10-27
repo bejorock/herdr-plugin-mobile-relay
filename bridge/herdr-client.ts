@@ -43,6 +43,13 @@ interface WireTab {
 }
 
 /** Raw wire shape of a pane from `pane.list` (and, identically, inside `session.snapshot`). */
+interface WireAgentSession {
+  source: string;
+  agent: string;
+  kind: "id" | "path";
+  value: string;
+}
+
 interface WirePane {
   pane_id: string;
   terminal_id: string;
@@ -52,6 +59,8 @@ interface WirePane {
   cwd?: string | null;
   foreground_cwd?: string | null;
   agent?: string | null;
+  /** Native agent session reference reported by Herdr's installed agent integration. */
+  agent_session?: WireAgentSession | null;
   agent_status: AgentStatus;
   revision: number;
   /** Scroll position (herdr ≥ 0.7.2); optional so older servers that omit it still typecheck. Unused for now. */
@@ -87,6 +96,49 @@ export interface CreatedShell {
 export interface CreatedWorktree extends CreatedShell {
   workspace: WorkspaceView;
   tab: TabView;
+}
+
+/** A running agent as reported by Herdr's `agent.start` / `agent.prompt` methods. */
+export interface AgentInfo {
+  paneId: string;
+  workspaceId: string;
+  tabId: string;
+  agent: string | null;
+  status: AgentStatus;
+  cwd: string;
+  focused: boolean;
+  interactiveReady: boolean;
+  launchPending: boolean;
+  agentSession?: WireAgentSession;
+}
+
+interface WireAgentInfo {
+  pane_id: string;
+  workspace_id: string;
+  tab_id: string;
+  agent?: string | null;
+  agent_status: AgentStatus;
+  cwd?: string | null;
+  foreground_cwd?: string | null;
+  focused: boolean;
+  interactive_ready?: boolean;
+  launch_pending?: boolean;
+  agent_session?: WireAgentSession | null;
+}
+
+function agentInfo(value: WireAgentInfo): AgentInfo {
+  return {
+    paneId: value.pane_id,
+    workspaceId: value.workspace_id,
+    tabId: value.tab_id,
+    agent: value.agent ?? null,
+    status: value.agent_status,
+    cwd: normalizedPaneCwd(value),
+    focused: value.focused,
+    interactiveReady: value.interactive_ready === true,
+    launchPending: value.launch_pending === true,
+    ...(value.agent_session ? { agentSession: value.agent_session } : {}),
+  };
 }
 
 function tabView(tab: WireTab): TabView {
@@ -500,6 +552,39 @@ export class HerdrClient {
       tabId: p.tab_id,
       cwd: normalizedPaneCwd(p, opts.cwd),
     };
+  }
+
+  /** Read one agent by pane/name target, including its native session binding when reported. */
+  async getAgent(target: string): Promise<AgentInfo> {
+    const result = await this.request<{ type: "agent_info"; agent: WireAgentInfo }>("agent.get", { target });
+    return agentInfo(result.agent);
+  }
+
+  /** Start a supported interactive agent in an existing shell pane without changing desktop focus. */
+  async startAgent(input: {
+    paneId: string;
+    kind: string;
+    name: string;
+    args?: string[];
+    timeoutMs?: number;
+  }): Promise<AgentInfo> {
+    const result = await this.request<{ type: "agent_started"; agent: WireAgentInfo }>("agent.start", {
+      pane_id: input.paneId,
+      kind: input.kind,
+      name: input.name,
+      ...(input.args?.length ? { args: input.args } : {}),
+      ...(input.timeoutMs !== undefined ? { timeout_ms: input.timeoutMs } : {}),
+    });
+    return agentInfo(result.agent);
+  }
+
+  /** Submit a semantic prompt through Herdr's agent-aware controller. */
+  async promptAgent(target: string, text: string): Promise<AgentInfo> {
+    const result = await this.request<{ type: "agent_prompted"; agent: WireAgentInfo }>("agent.prompt", {
+      target,
+      text,
+    });
+    return agentInfo(result.agent);
   }
 
   /** Create a linked git checkout and its workspace without stealing focus from the desktop TUI. */

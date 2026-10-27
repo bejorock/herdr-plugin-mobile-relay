@@ -33,7 +33,7 @@ const buildInfo = {
 };
 
 const buildInfoPlugin: Plugin = {
-  name: "herdr-control-build-info",
+  name: "rad-herdr-mobile-relay-build-info",
   generateBundle() {
     this.emitFile({
       type: "asset",
@@ -55,7 +55,7 @@ export default defineConfig({
       injectRegister: false,
       registerType: "autoUpdate",
       manifest: {
-        name: "Herdr Control",
+        name: "Herdr Mobile Relay",
         short_name: "Herdr",
         description: "Monitor and drive durable Herdr agent sessions",
         display: "standalone",

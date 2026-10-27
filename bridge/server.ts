@@ -13,6 +13,13 @@ import type { Snooze } from "./snooze.ts";
 import { observeTerminalFrames } from "./terminal-observer.ts";
 import type { UpdateMonitor } from "./update.ts";
 import type { StateEngine } from "./state-engine.ts";
+import { AcpWebSocketServer } from "./acp/server.ts";
+import { AgentHookServer } from "./acp/hook.ts";
+import { AcpBindingStore } from "./acp/binding-store.ts";
+import { LiveAcpSessionRegistry } from "./acp/session-registry.ts";
+import { HerdrAcpProvisioner } from "./acp/provision.ts";
+import { PiAcpPromptSender } from "./acp/prompt.ts";
+import { PiAcpCanceller } from "./acp/cancel.ts";
 import {
   listWorkspaceFiles,
   readWorkspaceFile,
@@ -23,6 +30,7 @@ import {
 } from "./workspace-inspection.ts";
 import type {
   ActionResponse,
+  AgentView,
   BridgeConfig,
   CreateResponse,
   DeviceAuth,
@@ -79,7 +87,7 @@ const CSP =
 // nosniff stops content-type confusion; no-referrer keeps the tailnet URL out of any Referer.
 const SECURITY_HEADERS: Record<string, string> = {
   "x-content-type-options": "nosniff",
-  "x-herdr-control": "herdr-control-v1",
+  "x-rad-herdr-mobile-relay": "rad-herdr-mobile-relay-v1",
   "referrer-policy": "no-referrer",
 };
 
@@ -99,6 +107,10 @@ const MIN_TERMINAL_ROWS = 5;
 const MAX_TERMINAL_ROWS = 200;
 
 const PANE_ROUTE = /^\/api\/pane\/([^/]+)(?:\/(reply|input|submit|keys|upload|close))?$/;
+
+// Hook sockets are separate from Bun's HTTP listener. Keep their cleanup ownership keyed to the
+// returned Bun server so index.ts can stop both resources during graceful process shutdown.
+const acpHookServers = new WeakMap<object, { hook: AgentHookServer; acp: AcpWebSocketServer }>();
 const TAB_ROUTE = /^\/api\/tab\/([^/]+)$/;
 const WORKTREE_ROUTE = /^\/api\/worktree\/([^/]+)$/;
 const PANE_FOCUS_ROUTE = /^\/api\/focus\/([^/]+)$/;
@@ -108,8 +120,13 @@ const WORKSPACE_GIT_ROUTE = /^\/api\/workspace\/([^/]+)\/git$/;
 const WORKSPACE_DIFF_ROUTE = /^\/api\/workspace\/([^/]+)\/diff$/;
 
 interface LiveSocketData {
-  session: string;
+  kind: "live" | "acp";
+  /** Present only for the existing terminal/live-update channel. */
+  session?: string;
   canControl: boolean;
+  /** Auth context retained for ACP after the HTTP upgrade is complete. */
+  user?: string | null;
+  device?: string | null;
   paneWatch?: {
     paneId: string;
     cols: number;
@@ -315,8 +332,42 @@ export function startServer(opts: {
   updateMonitor: UpdateMonitor;
   audit: AuditLog;
   liveUpdates: LiveUpdateHub;
+  /** Running package version for ACP implementation metadata. */
+  version?: string;
 }) {
   const { cfg, registry, push, snooze, notifyPrefs, updateMonitor, audit, liveUpdates } = opts;
+  const acpSessions = cfg.acp ? new LiveAcpSessionRegistry(registry, new AcpBindingStore(cfg.stateDir)) : null;
+  const acp = acpSessions
+    ? new AcpWebSocketServer(
+        acpSessions,
+        opts.version ?? "0.0.0",
+        new HerdrAcpProvisioner(registry, acpSessions),
+        new PiAcpPromptSender(acpSessions, cfg.stateDir),
+        new PiAcpCanceller(acpSessions),
+        audit,
+      )
+    : null;
+  const hookServer = acp
+    ? new AgentHookServer(cfg.stateDir, registry, {
+        bind(binding) {
+          if (binding.agent === "claude" && binding.transcriptPath) acpSessions?.bindTranscript(binding.acpSessionId, binding.transcriptPath);
+        },
+        publish(binding, event) {
+          if (event.kind === "agent.state") {
+            acp.publishState(binding.acpSessionId, event.state);
+          } else if (event.kind === "message.delta") {
+            acp.publishDelta(binding.acpSessionId, event, binding.agent);
+          } else if (event.kind === "tool.update") {
+            acp.publishTool(binding.acpSessionId, event, binding.agent);
+          } else if (event.kind === "custom.notification") {
+            acp.publishCustom(binding.acpSessionId, event);
+          }
+        },
+        interaction(binding, event, resolve) {
+          acp.requestInteraction(binding.acpSessionId, event, resolve);
+        },
+      })
+    : null;
   const replyDeduplicator = new ReplyDeduplicator();
   const createDeduplicator = new CreateDeduplicator();
   const worktreeCreateDeduplicator = new WorktreeCreateDeduplicator();
@@ -363,7 +414,20 @@ export function startServer(opts: {
         if (!rt) return unknownSession();
         const device = deviceAuth(req, cfg);
         const canControl = !device.enforced || device.authorized;
-        if (bunServer.upgrade(req, { data: { session: rt.name, canControl } })) return;
+        if (bunServer.upgrade(req, { data: { kind: "live", session: rt.name, canControl } })) return;
+        return text("websocket upgrade required", 426);
+      }
+
+      if (pathname === "/acp") {
+        if (!acp) return text("ACP is disabled", 404);
+        const gate = checkAccess(req, cfg);
+        if (!gate.ok) return text(gate.reason, 403);
+        const device = deviceAuth(req, cfg);
+        const canWrite = !device.enforced || device.authorized;
+        const user = req.headers.get(cfg.trustedUserHeader) ?? null;
+        if (bunServer.upgrade(req, {
+          data: { kind: "acp", canControl: canWrite, user, device: device.device },
+        })) return;
         return text("websocket upgrade required", 426);
       }
 
@@ -374,14 +438,17 @@ export function startServer(opts: {
         const rt = registry.get(sessionName);
         if (!rt) return unknownSession();
         const { agents, shellPanes, workspaces, tabs, bridge } = rt.engine.current();
+        // Native session references can contain absolute transcript paths. They are retained inside
+        // StateEngine for ACP binding, but the established REST snapshot must never disclose them.
+        const publicPane = ({ nativeSession: _nativeSession, ...pane }: AgentView) => pane;
         const device = deviceAuth(req, cfg);
         return json(
           {
             bridge,
             // Only report device state when the feature is on, so an off deployment sends nothing new.
             ...(device.enforced ? { device } : {}),
-            agents,
-            shellPanes,
+            agents: agents.map(publicPane),
+            shellPanes: shellPanes.map(publicPane),
             workspaces,
             tabs,
             sessions: registry.list(),
@@ -687,6 +754,7 @@ export function startServer(opts: {
           {
             push: push.enabled,
             vapidPublicKey: push.publicKey,
+            acp: cfg.acp,
             build: await buildId(),
           } satisfies BridgeConfig,
           req.headers.get("accept-encoding"),
@@ -851,14 +919,31 @@ export function startServer(opts: {
     },
     websocket: {
       open(socket) {
-        liveUpdates.add(socket.data.session, socket);
+        if (socket.data.kind === "acp") {
+          acp?.open(socket, {
+            user: socket.data.user ?? null,
+            device: socket.data.device ?? null,
+            canRead: true,
+            canWrite: socket.data.canControl,
+          });
+          return;
+        }
+        liveUpdates.add(socket.data.session!, socket);
       },
       close(socket) {
+        if (socket.data.kind === "acp") {
+          acp?.close(socket);
+          return;
+        }
         socket.data.paneWatch?.close();
-        liveUpdates.remove(socket.data.session, socket);
+        liveUpdates.remove(socket.data.session!, socket);
       },
       message(socket, rawMessage) {
         const raw = String(rawMessage);
+        if (socket.data.kind === "acp") {
+          void acp?.message(socket, raw);
+          return;
+        }
         const scroll = parseLiveScrollMessage(raw);
         if (scroll) {
           if (socket.data.canControl && socket.data.paneWatch?.paneId === scroll.paneId) {
@@ -946,6 +1031,13 @@ export function startServer(opts: {
     },
   });
 
+  // The hook listener is intentionally best-effort at this early opt-in stage: normal Herdr
+  // control must keep running when a stale owner-only socket needs operator attention. ACP status
+  // will surface the missing hook capability rather than silently trusting a fallback transport.
+  if (hookServer) {
+    void hookServer.start().catch((error) => console.error("[acp] hook socket unavailable:", error));
+  }
+
   console.log(`[bridge] listening on http://${cfg.host}:${cfg.port}  (poll ${cfg.pollMs}ms)`);
   if (cfg.host !== "127.0.0.1" && cfg.host !== "localhost") {
     console.warn(
@@ -973,7 +1065,16 @@ export function startServer(opts: {
     );
   }
 
+  if (hookServer && acp) acpHookServers.set(server, { hook: hookServer, acp });
   return server;
+}
+
+/** Stop the private ACP hook listener associated with one bridge HTTP server. */
+export async function stopAcpHooks(server: object): Promise<void> {
+  const services = acpHookServers.get(server);
+  acpHookServers.delete(server);
+  services?.acp.stop();
+  await services?.hook.stop();
 }
 
 export function parseLiveWatchMessage(raw: string): {
@@ -2090,7 +2191,7 @@ export function checkAccess(
   level: "read" | "write" = "read",
 ): { ok: true } | { ok: false; reason: string } {
   const host = effectiveRequestHost(req);
-  // Deliberate threat boundary: Herdr Control is an owner-scoped, single-user workstation service.
+  // Deliberate threat boundary: Herdr Mobile Relay is an owner-scoped, single-user workstation service.
   // TCP loopback is not an OS-user authentication mechanism; multi-user hosts need an isolating VM
   // or user namespace rather than treating this local-operator exemption as cross-user security.
   const trustedLoopback = isDirectLoopbackRequest(req, cfg);
@@ -2352,7 +2453,7 @@ export async function serveStatic(pathname: string, webDir: string = WEB_DIR): P
   const ext = extname(full);
   const headers: Record<string, string> = {
     "content-type": CONTENT_TYPES[ext] ?? "application/octet-stream",
-    "x-herdr-control-build": await buildId(),
+    "x-rad-herdr-mobile-relay-build": await buildId(),
   };
   if (ext === ".html") {
     headers["content-security-policy"] = CSP;

@@ -11,9 +11,9 @@ import {
 
 describe("push decisions", () => {
   it("clears notification slots even while the app is visible", () => {
-    expect(decidePush({ type: "clear", tag: "herdr-control:herd" }, true)).toEqual({
+    expect(decidePush({ type: "clear", tag: "rad-herdr-mobile-relay:herd" }, true)).toEqual({
       kind: "clear",
-      tag: "herdr-control:herd",
+      tag: "rad-herdr-mobile-relay:herd",
     });
   });
 
@@ -36,7 +36,7 @@ describe("push decisions", () => {
       ),
     ).toMatchObject({
       kind: "show",
-      tag: "herdr-control:p1",
+      tag: "rad-herdr-mobile-relay:p1",
       paneId: "p1",
       session: "buildbox",
       target: "settings",
@@ -50,9 +50,9 @@ describe("push decisions", () => {
     ).toMatchObject({ kind: "show", renotify: false, silent: true });
   });
 
-  it("uses Herdr Control notification tags", () => {
-    expect(tagFor("p1")).toBe("herdr-control:p1");
-    expect(tagFor()).toBe("herdr-control");
+  it("uses Herdr Mobile Relay notification tags", () => {
+    expect(tagFor("p1")).toBe("rad-herdr-mobile-relay:p1");
+    expect(tagFor()).toBe("rad-herdr-mobile-relay");
   });
 
   it("matches visible windows only to their selected Herdr session", () => {

@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.0.7] - 2026-10-28
+
+### Fixed
+
+- Improve the Redoc developer portal's dark theme contrast, code styling, response panels, navigation, and typography for readable API documentation.
+
 ## [1.0.6] - 2026-10-28
 
 ### Added

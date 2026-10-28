@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.0.5] - 2026-10-28
+
+### Fixed
+
+- Generate valid optional systemd `EnvironmentFile=` syntax, so remote Tailscale access settings in the plugin `.env` load correctly.
+
 ## [1.0.4] - 2026-10-28
 
 ### Fixed

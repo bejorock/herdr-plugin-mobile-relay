@@ -378,7 +378,7 @@ Environment="COLLIE_PUBLIC_HOSTS=${public_hosts_escaped}"
 Environment="HERDR_CONTROL_EFFECTIVE_PUBLIC_HOSTS=${public_hosts_escaped}"
 Environment="HERDR_PLUGIN_CONFIG_DIR=${config_escaped}"
 ${state_environment}
-EnvironmentFile="-${config_escaped}/.env"
+EnvironmentFile=-${config_escaped}/.env
 
 [Install]
 WantedBy=default.target

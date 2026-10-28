@@ -57,6 +57,21 @@ JSON
     expect(result.exitCode, result.stderr.toString()).toBe(0);
   });
 
+  test("writes an optional systemd environment file using valid unquoted syntax", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "rad-herdr-mobile-relay-envfile-"));
+    temporaryDirectories.push(directory);
+    const bun = join(directory, "bun");
+    await writeFile(bun, "#!/bin/sh\nexit 0\n");
+    await chmod(bun, 0o755);
+    const config = join(directory, "config");
+    const script = resolve(import.meta.dir, "../scripts/collie-ctl.sh");
+    const result = Bun.spawnSync(["/bin/bash", "-c", 'source "$1"; have_systemd() { return 0; }; systemctl() { return 0; }; write_unit; grep -Fx "EnvironmentFile=-$HERDR_PLUGIN_CONFIG_DIR/.env" "$UNIT_FILE"', "bash", script], {
+      env: { ...process.env, HOME: directory, HERDR_PLUGIN_CONFIG_DIR: config, PATH: `/usr/bin:/bin:${dirname(bun)}` },
+      stdout: "pipe", stderr: "pipe",
+    });
+    expect(result.exitCode, result.stderr.toString()).toBe(0);
+  });
+
   test("finds Bun from its standard user install path when a plugin action has a minimal PATH", async () => {
     const directory = await mkdtemp(join(tmpdir(), "rad-herdr-mobile-relay-bun-"));
     temporaryDirectories.push(directory);

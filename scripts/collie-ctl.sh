@@ -359,8 +359,8 @@ StartLimitIntervalSec=0
 
 [Service]
 Type=simple
-WorkingDirectory="${root_escaped}"
-ExecStart="${bun_escaped}" run "${root_escaped}/bridge/index.ts"
+WorkingDirectory=${root_escaped}
+ExecStart=${bun_escaped} run ${root_escaped}/bridge/index.ts
 Restart=on-failure
 RestartSec=5
 # Hardening: the bridge is remote shell access, so deny privilege escalation and give it a private

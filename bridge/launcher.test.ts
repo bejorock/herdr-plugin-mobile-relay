@@ -43,6 +43,20 @@ JSON
     );
   });
 
+  test("writes a systemd unit with an unquoted absolute working directory", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "rad-herdr-mobile-relay-unit-"));
+    temporaryDirectories.push(directory);
+    const bun = join(directory, "bun");
+    await writeFile(bun, "#!/bin/sh\nexit 0\n");
+    await chmod(bun, 0o755);
+    const script = resolve(import.meta.dir, "../scripts/collie-ctl.sh");
+    const result = Bun.spawnSync(["/bin/bash", "-c", 'source "$1"; have_systemd() { return 0; }; systemctl() { return 0; }; write_unit; grep -E "^WorkingDirectory=/" "$UNIT_FILE"; grep -E "^ExecStart=/" "$UNIT_FILE"', "bash", script], {
+      env: { ...process.env, HOME: directory, HERDR_PLUGIN_CONFIG_DIR: join(directory, "config"), PATH: `/usr/bin:/bin:${dirname(bun)}` },
+      stdout: "pipe", stderr: "pipe",
+    });
+    expect(result.exitCode, result.stderr.toString()).toBe(0);
+  });
+
   test("finds Bun from its standard user install path when a plugin action has a minimal PATH", async () => {
     const directory = await mkdtemp(join(tmpdir(), "rad-herdr-mobile-relay-bun-"));
     temporaryDirectories.push(directory);

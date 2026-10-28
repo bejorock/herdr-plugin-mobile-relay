@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.0.3] - 2026-10-28
+
+### Fixed
+
+- Generate a valid systemd `WorkingDirectory=` and `ExecStart=` when starting the plugin service.
+
 ## [1.0.2] - 2026-10-28
 
 ### Fixed

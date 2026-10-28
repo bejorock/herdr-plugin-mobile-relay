@@ -51,6 +51,7 @@ export default defineConfig({
         app: resolve(import.meta.dirname, "index.html"),
         developer: resolve(import.meta.dirname, "developer.html"),
         developerAcp: resolve(import.meta.dirname, "developer-acp.html"),
+        developerPiHooks: resolve(import.meta.dirname, "developer-pi-hooks.html"),
       },
     },
   },

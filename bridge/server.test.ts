@@ -247,6 +247,13 @@ describe("developer documentation assets", () => {
     const acpGuide = await serveStatic("/developer/acp.md", WEB);
     expect(acpGuide.status).toBe(200);
     expect(await acpGuide.text()).toContain("# ACP WebSocket API");
+
+    const piHooksPage = await serveStatic("/developer-pi-hooks.html", WEB);
+    expect(piHooksPage.status).toBe(200);
+    expect(await piHooksPage.text()).toContain("Pi extension hook guide");
+    const piHooksGuide = await serveStatic("/developer/pi-hooks.md", WEB);
+    expect(piHooksGuide.status).toBe(200);
+    expect(await piHooksGuide.text()).toContain("# Pi Relay Hook Event Bridge");
   });
 });
 

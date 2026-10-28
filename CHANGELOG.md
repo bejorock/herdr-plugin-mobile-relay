@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.0.9] - 2026-10-28
+
+### Added
+
+- Render the Pi extension `pi.events` relay-hook guide inside the developer portal at `/developer-pi-hooks.html`, linked from both REST and ACP developer references.
+
 ## [1.0.8] - 2026-10-28
 
 ### Added

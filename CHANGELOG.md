@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.0.4] - 2026-10-28
+
+### Fixed
+
+- Export the discovered Bun directory into plugin action `PATH` so nested `bun run` scripts can resolve `bunx`.
+
 ## [1.0.3] - 2026-10-28
 
 ### Fixed

@@ -73,6 +73,26 @@ JSON
     expect(result.exitCode, result.stderr.toString()).toBe(0);
   });
 
+  test("exports the discovered Bun directory so nested Bun scripts find bunx", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "rad-herdr-mobile-relay-bun-path-"));
+    temporaryDirectories.push(directory);
+    const bin = join(directory, ".bun/bin");
+    await mkdir(bin, { recursive: true });
+    const bun = join(bin, "bun");
+    const bunx = join(bin, "bunx");
+    await writeFile(bun, "#!/bin/sh\nexit 0\n");
+    await writeFile(bunx, "#!/bin/sh\nexit 0\n");
+    await chmod(bun, 0o755);
+    await chmod(bunx, 0o755);
+    const script = resolve(import.meta.dir, "../scripts/collie-ctl.sh");
+    const result = Bun.spawnSync(["/bin/bash", "-c", 'source "$1"; command -v bun; command -v bunx', "bash", script], {
+      env: { ...process.env, HOME: directory, PATH: "/usr/bin:/bin", HERDR_PLUGIN_CONFIG_DIR: join(directory, "config") },
+      stdout: "pipe", stderr: "pipe",
+    });
+    expect(result.exitCode, result.stderr.toString()).toBe(0);
+    expect(result.stdout.toString().split("\n").filter(Boolean)).toEqual([bun, bunx]);
+  });
+
   test("launchd stop removes the RunAtLoad plist so the bridge stays stopped after login", async () => {
     const directory = await mkdtemp(join(tmpdir(), "rad-herdr-mobile-relay-launchd-stop-"));
     temporaryDirectories.push(directory);

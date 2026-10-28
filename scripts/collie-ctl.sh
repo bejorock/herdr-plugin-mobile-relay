@@ -88,6 +88,9 @@ SERVE_PORT="$(normalize_port "${COLLIE_SERVE_PORT:-$PORT}" "$PORT")"
 # directory. Prefer PATH but fall back to Bun's documented per-user location.
 BUN="$(command -v bun || true)"
 if [ -z "$BUN" ] && [ -x "${HOME}/.bun/bin/bun" ]; then BUN="${HOME}/.bun/bin/bun"; fi
+# `bun run` scripts may invoke `bunx` or `bun` by name. Keep the discovered executable's
+# directory on PATH for those child shells too, including minimal Herdr plugin action environments.
+if [ -n "$BUN" ]; then export PATH="$(dirname "$BUN"):${PATH}"; fi
 TAILSCALE="$(command -v tailscale || true)"
 if [ -z "$TAILSCALE" ] && [ -x "/Applications/Tailscale.app/Contents/MacOS/Tailscale" ]; then
   TAILSCALE="/Applications/Tailscale.app/Contents/MacOS/Tailscale"

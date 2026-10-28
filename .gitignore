@@ -9,6 +9,7 @@ web/artifacts/
 .env.*
 !.env.example
 .DS_Store
+.local-runtime-state/
 *.log
 *.pid
 

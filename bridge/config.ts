@@ -160,7 +160,7 @@ export interface Config {
    * already-discovered session; they never build a filesystem path.
    */
   multiSession: boolean;
-  /** Enables the experimental ACP v2 WebSocket endpoint. Off by default until hooks/adapters are configured. */
+  /** Enables the experimental ACP v2 WebSocket endpoint. On by default; set COLLIE_ACP=off to disable it. */
   acp: boolean;
 }
 
@@ -205,6 +205,6 @@ export function loadConfig(): Config {
     vapidSubject: process.env.COLLIE_VAPID_SUBJECT ?? "mailto:admin@example.com",
     stateDir,
     multiSession: envBool("COLLIE_MULTI_SESSION", true),
-    acp: envBool("COLLIE_ACP", false),
+    acp: envBool("COLLIE_ACP", true),
   };
 }

@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.0.1] - 2026-10-28
+
+### Changed
+
+- Enable the experimental ACP v2 WebSocket endpoint by default. Set `COLLIE_ACP=off` to deliberately disable it; Pi and Claude hooks remain separately explicit opt-in actions.
+
 ## [1.0.0] - 2026-10-27
 
 ### Added

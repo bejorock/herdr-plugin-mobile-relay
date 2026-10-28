@@ -149,7 +149,7 @@ Copy [.env.example](.env.example) to `.env` in that directory. Important setting
 | `COLLIE_SERVE_PORT` | relay port | Dedicated public tailnet listener. |
 | `HERDR_SOCKET_PATH` | Herdr default socket | Override only for a nonstandard Herdr installation. |
 | `COLLIE_MULTI_SESSION` | `on` | Discover and expose named Herdr sessions. |
-| `COLLIE_ACP` | `off` | Enable the experimental ACP v2 WebSocket endpoint at `/acp`. |
+| `COLLIE_ACP` | `on` | Enable the experimental ACP v2 WebSocket endpoint at `/acp`; set `off` to disable it. |
 | `COLLIE_UPDATE_REPO` | unset | Optional GitHub `owner/repo` for release-update checks, e.g. `bejorock/herdr-plugin-mobile-relay`. |
 | `COLLIE_POLL_MS` | `1500` | Fast fallback polling interval. |
 | `COLLIE_POLL_IDLE_MS` | `12000` | Safety-net polling while event subscriptions are healthy. |
@@ -292,18 +292,20 @@ herdr-plugin.toml       Herdr plugin manifest
 
 ## ACP agent API (experimental)
 
-Herdr Mobile Relay can additionally act as an [Agent Client Protocol (ACP) v2](https://agentclientprotocol.com/) adapter. ACP is **off by default** and uses a WebSocket-only JSON-RPC endpoint:
+Herdr Mobile Relay includes an [Agent Client Protocol (ACP) v2](https://agentclientprotocol.com/) adapter by default. It uses a WebSocket-only JSON-RPC endpoint:
 
 ```text
 local:  ws://127.0.0.1:8787/acp
 remote: wss://your-machine.your-tailnet.ts.net:8787/acp
 ```
 
-Enable it in the private plugin configuration file, then restart the bridge:
+ACP is enabled by default. To deliberately disable it in the private plugin configuration file:
 
 ```dotenv
-COLLIE_ACP=on
+COLLIE_ACP=off
 ```
+
+Then restart the bridge:
 
 ```bash
 herdr plugin action invoke restart --plugin rad.herdr-mobile-relay
@@ -410,7 +412,7 @@ Common causes:
   terminator; PWA installation and Web Push still require a secure browser context.
 - **Port already belongs to another Serve app:** choose another `COLLIE_SERVE_PORT`; the launcher
   intentionally refuses to overwrite mappings it does not own.
-- **`/acp` returns 404 or upgrade fails:** set `COLLIE_ACP=on` in the plugin `.env`, then restart the bridge.
+- **`/acp` returns 404 or upgrade fails:** confirm `COLLIE_ACP` is not set to `off`, then restart the bridge.
 - **ACP has transcript updates but no live Pi/Claude events:** explicitly install the appropriate relay hook and restart that agent session.
 - **Claude uses terminal-local permission/question/plan UI:** no write-authorized ACP client was connected, the interaction was cancelled/expired, or the hook is not installed for that session. This is fail-safe behavior.
 

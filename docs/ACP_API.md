@@ -16,10 +16,10 @@ The relay is an ACP adapter; Herdr, Pi, and Claude Code do not need to natively 
 
 ## Enablement and access
 
-ACP is disabled by default:
+ACP is enabled by default. To deliberately disable it:
 
 ```dotenv
-COLLIE_ACP=on
+COLLIE_ACP=off
 ```
 
 The endpoint uses the relay's existing security boundary:

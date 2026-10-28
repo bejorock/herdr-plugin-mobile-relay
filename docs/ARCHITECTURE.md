@@ -18,7 +18,7 @@ Herdr remains the source of truth for process lifetime, pane state, workspace st
 
 ## ACP adapter plane
 
-When `COLLIE_ACP=on`, the same Bun process also serves an experimental ACP v2 JSON-RPC WebSocket at `/acp`. It adapts normal interactive Pi and Claude Code processes running in Herdr panes; agents do not need to run in headless, RPC, or ACP mode.
+Unless explicitly disabled with `COLLIE_ACP=off`, the same Bun process also serves an experimental ACP v2 JSON-RPC WebSocket at `/acp`. It adapts normal interactive Pi and Claude Code processes running in Herdr panes; agents do not need to run in headless, RPC, or ACP mode.
 
 ```text
 ACP client

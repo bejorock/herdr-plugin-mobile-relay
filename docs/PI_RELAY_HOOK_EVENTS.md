@@ -8,7 +8,7 @@ herdr plugin action invoke hooks-install --plugin rad.herdr-mobile-relay
 
 bridges selected Pi extension events to the Herdr Mobile Relay private hook socket. It is not a separate SDK package. Other installed Pi extensions communicate with it through Pi's shared `pi.events` bus.
 
-The bridge is active only inside a Herdr pane after Pi has restarted and the relay is running with `COLLIE_ACP=on`. Events emitted immediately at session startup are bounded and queued until the verified private-socket handshake completes, so the first interaction is not lost.
+The bridge is active only inside a Herdr pane after Pi has restarted and ACP has not been explicitly disabled with `COLLIE_ACP=off`. Events emitted immediately at session startup are bounded and queued until the verified private-socket handshake completes, so the first interaction is not lost.
 
 ## Automatic Pi events
 

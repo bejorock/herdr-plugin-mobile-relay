@@ -71,11 +71,11 @@ describe("loadConfig", () => {
     expect(cfg.deviceAllowlist).toEqual([]);
     // Multi-session support is on by default.
     expect(cfg.multiSession).toBe(true);
-    // ACP stays opt-in while the adapter/hook surface is experimental.
-    expect(cfg.acp).toBe(false);
+    // ACP is the relay's primary added surface; hooks remain independently opt-in.
+    expect(cfg.acp).toBe(true);
   });
 
-  test("parses COLLIE_ACP as an opt-in boolean toggle", () => {
+  test("parses COLLIE_ACP as a default-on boolean toggle", () => {
     for (const on of ["on", "1", "true", "yes", "ON", " True "]) {
       process.env.COLLIE_ACP = on;
       expect(loadConfig().acp).toBe(true);
@@ -85,7 +85,7 @@ describe("loadConfig", () => {
       expect(loadConfig().acp).toBe(false);
     }
     process.env.COLLIE_ACP = "banana";
-    expect(loadConfig().acp).toBe(false);
+    expect(loadConfig().acp).toBe(true);
   });
 
   test("parses COLLIE_MULTI_SESSION as a boolean toggle (default on)", () => {

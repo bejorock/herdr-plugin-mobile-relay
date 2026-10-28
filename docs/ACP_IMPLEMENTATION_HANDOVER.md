@@ -100,7 +100,7 @@ bridge/acp/
 
 Implemented:
 
-- `COLLIE_ACP=on` opt-in configuration; default off.
+- `COLLIE_ACP` configuration; default on and explicitly disableable with `COLLIE_ACP=off`.
 - ACP WebSocket `/acp` mounted in `bridge/server.ts`.
 - strict initialization requirement, frame limit (256 KiB), no JSON-RPC batches.
 - `initialize`, `session/list`, `session/resume`, `session/new`, `session/prompt`, `session/cancel`, `session/close`.

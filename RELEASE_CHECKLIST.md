@@ -29,7 +29,7 @@ From a clean test host or a disposable plugin config directory:
 herdr plugin install bejorock/herdr-plugin-mobile-relay --ref v1.0.0 --yes
 config_dir="$(herdr plugin config-dir rad.herdr-mobile-relay)"
 install -m 600 .env.example "$config_dir/.env"
-# Set COLLIE_TRUSTED_USER and, for ACP, COLLIE_ACP=on.
+# Set COLLIE_TRUSTED_USER. ACP is enabled unless you set COLLIE_ACP=off.
 herdr plugin action invoke start --plugin rad.herdr-mobile-relay
 herdr plugin action invoke status --plugin rad.herdr-mobile-relay
 herdr plugin action invoke hooks-status --plugin rad.herdr-mobile-relay
@@ -38,7 +38,7 @@ herdr plugin action invoke hooks-status --plugin rad.herdr-mobile-relay
 Verify:
 
 - relay remains loopback-only;
-- ACP is off until `COLLIE_ACP=on`;
+- ACP is available by default and can be deliberately disabled with `COLLIE_ACP=off`;
 - hook installation is explicit and preserves unrelated configuration;
 - Tailscale Serve is private; never use Funnel;
 - a trusted remote client can reach the normal control API and `/acp` after ACP is enabled.

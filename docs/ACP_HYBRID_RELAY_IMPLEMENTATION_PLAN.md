@@ -9,7 +9,7 @@
 Completed initial vertical slice:
 
 - pinned `@agentclientprotocol/sdk` `2.0.2` and uses its experimental ACP v2 protocol constant;
-- added opt-in `COLLIE_ACP=on` configuration, off by default;
+- added `COLLIE_ACP` configuration, enabled by default and explicitly disableable with `COLLIE_ACP=off`;
 - added authenticated WebSocket endpoint `GET /acp` to the existing Bun relay;
 - preserves Herdr-reported native session references internally while redacting them from existing REST snapshots;
 - projects connected Herdr agent panes into opaque ACP session IDs;
@@ -1189,7 +1189,7 @@ Transcript file reads must enforce:
 Add documented environment configuration only where essential, for example:
 
 ```dotenv
-# Master switch for ACP endpoint (default off during initial rollout)
+# Master switch for ACP endpoint (default on; set off only to disable)
 COLLIE_ACP=off
 
 # Enable individual built-in adapters after hooks are installed

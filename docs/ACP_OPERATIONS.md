@@ -4,7 +4,7 @@ This guide is for operators of Herdr Mobile Relay's experimental ACP adapter.
 
 ## Enable ACP
 
-ACP is disabled by default. Edit the plugin configuration file:
+ACP is enabled by default. Edit the plugin configuration file when you need to set remote access or explicitly disable ACP:
 
 ```bash
 config_dir="$(herdr plugin config-dir rad.herdr-mobile-relay)"
@@ -12,10 +12,10 @@ install -d -m 700 "$config_dir"
 install -m 600 .env.example "$config_dir/.env"  # only when it does not yet exist
 ```
 
-Set:
+To deliberately disable ACP:
 
 ```dotenv
-COLLIE_ACP=on
+COLLIE_ACP=off
 ```
 
 Then restart the bridge:
@@ -151,7 +151,7 @@ See [ACP WebSocket API](ACP_API.md) for request/response examples.
 
 | Symptom | Check |
 | --- | --- |
-| `/acp` unavailable | Confirm `COLLIE_ACP=on`, then restart the bridge. |
+| `/acp` unavailable | Confirm `COLLIE_ACP` is not set to `off`, then restart the bridge. |
 | ACP has history but no live semantic events | Install the relevant hook and restart that Pi/Claude session. |
 | Claude shows a local permission/question/plan UI | No authorized ACP writer was connected, an answer was invalid, or the hook interaction expired/cancelled. This is intentional fail-safe behavior. |
 | Pi extension receives no interaction result | Confirm the Pi relay hook is installed, the extension uses an exact request ID, and an authorized ACP client answered. |

@@ -84,7 +84,10 @@ if [ "$SERVE_MODE_RAW" = "http" ]; then SERVE_MODE="http"; else SERVE_MODE="http
 # Use a dedicated public listener by default so Herdr Mobile Relay does not replace an existing :443
 # Serve mapping. Set 443 explicitly when this app should own the root MagicDNS URL.
 SERVE_PORT="$(normalize_port "${COLLIE_SERVE_PORT:-$PORT}" "$PORT")"
+# Herdr plugin actions can run with a minimal PATH that omits Bun's standard user install
+# directory. Prefer PATH but fall back to Bun's documented per-user location.
 BUN="$(command -v bun || true)"
+if [ -z "$BUN" ] && [ -x "${HOME}/.bun/bin/bun" ]; then BUN="${HOME}/.bun/bin/bun"; fi
 TAILSCALE="$(command -v tailscale || true)"
 if [ -z "$TAILSCALE" ] && [ -x "/Applications/Tailscale.app/Contents/MacOS/Tailscale" ]; then
   TAILSCALE="/Applications/Tailscale.app/Contents/MacOS/Tailscale"

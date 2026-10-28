@@ -1,6 +1,6 @@
 # Release Checklist
 
-This checklist prepares the `rad.herdr-mobile-relay` fork for publication as **v1.0.0**.
+This checklist prepares the `rad.herdr-mobile-relay` fork for publication. Replace `<version>` below with the intended release version.
 
 ## Completed in this repository
 
@@ -18,7 +18,7 @@ This checklist prepares the `rad.herdr-mobile-relay` fork for publication as **v
 - [ ] When Claude quota is available, run the deferred disposable live test for private-path image prompting plus `MessageDisplay`, tool lifecycle, and `Stop` updates.
 - [ ] Confirm the target GitHub remote is `https://github.com/bejorock/herdr-plugin-mobile-relay.git`.
 - [ ] Push the release commit to `main`.
-- [ ] Create and push annotated tag `v1.0.0`.
+- [ ] Create and push the intended annotated `v<version>` tag.
 - [ ] Create the GitHub release, marking ACP explicitly **experimental**.
 
 ## Post-publish smoke test
@@ -26,7 +26,7 @@ This checklist prepares the `rad.herdr-mobile-relay` fork for publication as **v
 From a clean test host or a disposable plugin config directory:
 
 ```bash
-herdr plugin install bejorock/herdr-plugin-mobile-relay --ref v1.0.0 --yes
+herdr plugin install bejorock/herdr-plugin-mobile-relay --ref v<version> --yes
 config_dir="$(herdr plugin config-dir rad.herdr-mobile-relay)"
 install -m 600 .env.example "$config_dir/.env"
 # Set COLLIE_TRUSTED_USER. ACP is enabled unless you set COLLIE_ACP=off.

@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.0.2] - 2026-10-28
+
+### Fixed
+
+- Discover Bun from the standard `~/.bun/bin/bun` location when Herdr invokes plugin actions with a minimal `PATH`.
+
 ## [1.0.1] - 2026-10-28
 
 ### Changed

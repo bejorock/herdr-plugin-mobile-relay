@@ -43,6 +43,22 @@ JSON
     );
   });
 
+  test("finds Bun from its standard user install path when a plugin action has a minimal PATH", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "rad-herdr-mobile-relay-bun-"));
+    temporaryDirectories.push(directory);
+    const bin = join(directory, ".bun/bin");
+    await mkdir(bin, { recursive: true });
+    const bun = join(bin, "bun");
+    await writeFile(bun, "#!/bin/sh\nexit 0\n");
+    await chmod(bun, 0o755);
+    const script = resolve(import.meta.dir, "../scripts/collie-ctl.sh");
+    const result = Bun.spawnSync(["/bin/bash", "-c", 'source "$1"; test "$BUN" = "$HOME/.bun/bin/bun"', "bash", script], {
+      env: { ...process.env, HOME: directory, PATH: "/usr/bin:/bin", HERDR_PLUGIN_CONFIG_DIR: join(directory, "config") },
+      stdout: "pipe", stderr: "pipe",
+    });
+    expect(result.exitCode, result.stderr.toString()).toBe(0);
+  });
+
   test("launchd stop removes the RunAtLoad plist so the bridge stays stopped after login", async () => {
     const directory = await mkdtemp(join(tmpdir(), "rad-herdr-mobile-relay-launchd-stop-"));
     temporaryDirectories.push(directory);

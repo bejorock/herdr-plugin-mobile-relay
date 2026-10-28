@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.0.8] - 2026-10-28
+
+### Added
+
+- Render the complete ACP v2 WebSocket guide inside the developer portal at `/developer-acp.html`, linked directly from the Redoc REST reference.
+
 ## [1.0.7] - 2026-10-28
 
 ### Fixed

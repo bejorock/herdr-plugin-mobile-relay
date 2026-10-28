@@ -240,6 +240,13 @@ describe("developer documentation assets", () => {
     expect(page.status).toBe(200);
     expect(page.headers.get("content-type")).toContain("text/html");
     expect(await page.text()).toContain("Developer reference");
+
+    const acpPage = await serveStatic("/developer-acp.html", WEB);
+    expect(acpPage.status).toBe(200);
+    expect(await acpPage.text()).toContain("ACP WebSocket guide");
+    const acpGuide = await serveStatic("/developer/acp.md", WEB);
+    expect(acpGuide.status).toBe(200);
+    expect(await acpGuide.text()).toContain("# ACP WebSocket API");
   });
 });
 

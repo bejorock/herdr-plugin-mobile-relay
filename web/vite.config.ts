@@ -50,6 +50,7 @@ export default defineConfig({
       input: {
         app: resolve(import.meta.dirname, "index.html"),
         developer: resolve(import.meta.dirname, "developer.html"),
+        developerAcp: resolve(import.meta.dirname, "developer-acp.html"),
       },
     },
   },

@@ -20,7 +20,13 @@ It also serves the machine-readable OpenAPI 3.1 document at:
 http://127.0.0.1:8787/developer/openapi.json
 ```
 
-When the relay is privately published through Tailscale Serve, use the same paths under its tailnet HTTPS origin. The OpenAPI document covers HTTP routes and summarizes WebSocket upgrades; this guide supplies the complete `/api/live` protocol, while [ACP_API.md](ACP_API.md) is authoritative for `/acp`.
+The complete rendered ACP v2 guide is available inside the same developer portal:
+
+```text
+http://127.0.0.1:8787/developer-acp.html
+```
+
+When the relay is privately published through Tailscale Serve, use the same paths under its tailnet HTTPS origin. The OpenAPI document covers HTTP routes and summarizes WebSocket upgrades; this guide supplies the complete `/api/live` protocol, while [ACP_API.md](ACP_API.md) is authoritative for `/acp` and is rendered at `/developer-acp.html`.
 
 ## Connection and security
 

@@ -45,6 +45,14 @@ const buildInfoPlugin: Plugin = {
 
 export default defineConfig({
   define: { __BUILD_INFO__: JSON.stringify(buildInfo) },
+  build: {
+    rollupOptions: {
+      input: {
+        app: resolve(import.meta.dirname, "index.html"),
+        developer: resolve(import.meta.dirname, "developer.html"),
+      },
+    },
+  },
   plugins: [
     react(),
     buildInfoPlugin,

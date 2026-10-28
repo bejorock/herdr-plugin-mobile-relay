@@ -1,6 +1,6 @@
 id = "rad.herdr-mobile-relay"
 name = "Herdr Mobile Relay"
-version = "1.0.5"
+version = "1.0.6"
 min_herdr_version = "0.7.0"
 description = "T3 Code-style web control plane for durable Herdr sessions, served over Tailscale"
 platforms = ["linux", "macos"]

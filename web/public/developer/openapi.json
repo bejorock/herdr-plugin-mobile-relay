@@ -1,0 +1,1646 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Herdr Mobile Relay REST API",
+    "version": "1.0.6",
+    "description": "# Build against Herdr Mobile Relay\n\nThis reference describes the HTTP control-plane API. The relay always binds to loopback; when it is reached over Tailscale Serve, configure a trusted Tailscale user and use the same HTTPS origin for the documentation and API.\n\n## Authentication and authorization\n\nDirect calls to `127.0.0.1` are local-operator calls. Remote requests must pass the configured Tailscale identity gate (`Tailscale-User-Login` by default). Write operations additionally require a device authorized by the optional device policy. Browser writes must be same-origin; native clients without an `Origin` send `X-Herdr-Client: herdr-mobile-v1`.\n\nAll session-scoped REST routes accept optional `?session=<name>`. Omit it to use the primary Herdr session. IDs returned by snapshots are opaque and must be URL encoded when inserted into a path.\n\n## WebSocket interfaces\n\n- **`/api/live`** \u2014 raw terminal/control WebSocket. Upgrade a GET request after passing the same access checks. Server messages: `connected`, `source_status`, `snapshot_changed`, `pane_output_changed`, `pane_stream_status`, and `pane_frame`. Client commands: `watch_pane` and `scroll_pane`. This is the low-level terminal fallback.\n- **`/acp`** \u2014 ACP v2-style JSON-RPC 2.0 WebSocket. Text frames only; 256 KiB maximum inbound frame; batches rejected. The first request is `initialize`; then use `session/list`, `session/resume`, `session/new`, `session/prompt`, `session/close`, and `session/cancel`. Read the full [ACP WebSocket guide](https://github.com/bejorock/herdr-plugin-mobile-relay/blob/main/docs/ACP_API.md) before implementing a client.\n\nOpenAPI does not model either WebSocket protocol.\n\n## Errors\n\nRoute and validation errors use a non-2xx status. JSON errors normally use `{ \"error\": \"\u2026\" }`; a few legacy endpoint errors are plain text. Mutations return an `ActionResponse` body for a Herdr-side failure. If `deliveryAmbiguous` or `textDelivered` is true, inspect the terminal state before retrying."
+  },
+  "servers": [
+    {
+      "url": "/",
+      "description": "Same origin as the relay UI"
+    }
+  ],
+  "tags": [
+    {
+      "name": "State",
+      "description": "Authoritative snapshots and relay capabilities."
+    },
+    {
+      "name": "Panes",
+      "description": "Read and drive terminal panes."
+    },
+    {
+      "name": "Workspace",
+      "description": "Workspace, tab, worktree, file and Git operations."
+    },
+    {
+      "name": "Notifications",
+      "description": "Web Push subscriptions and relay-wide preferences."
+    },
+    {
+      "name": "WebSockets",
+      "description": "Protocol summaries; use the ACP guide for the structured agent channel."
+    }
+  ],
+  "paths": {
+    "/api/snapshot": {
+      "get": {
+        "tags": [
+          "State"
+        ],
+        "summary": "Read the current Herdr snapshot",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Session"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Current panes, workspaces, tabs and relay status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Snapshot"
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/api/config": {
+      "get": {
+        "tags": [
+          "State"
+        ],
+        "summary": "Read relay capabilities",
+        "responses": {
+          "200": {
+            "description": "Capability and build information",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BridgeConfig"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/update/check": {
+      "post": {
+        "tags": [
+          "State"
+        ],
+        "summary": "Check for an available plugin update",
+        "responses": {
+          "200": {
+            "description": "Current update status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UpdateStatus"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/pane/{paneId}": {
+      "get": {
+        "tags": [
+          "Panes"
+        ],
+        "summary": "Read bounded recent pane output",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PaneId"
+          },
+          {
+            "$ref": "#/components/parameters/Lines"
+          },
+          {
+            "$ref": "#/components/parameters/Session"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "ANSI terminal text and Herdr revision",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaneRead"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/pane/{paneId}/reply": {
+      "post": {
+        "tags": [
+          "Panes"
+        ],
+        "summary": "Type a reply and optionally submit it",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PaneId"
+          },
+          {
+            "$ref": "#/components/parameters/Session"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReplyRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Mutation result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/pane/{paneId}/input": {
+      "post": {
+        "tags": [
+          "Panes"
+        ],
+        "summary": "Type raw terminal input without submitting",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PaneId"
+          },
+          {
+            "$ref": "#/components/parameters/Session"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "data"
+                ],
+                "properties": {
+                  "data": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 65536
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Action"
+          }
+        }
+      }
+    },
+    "/api/pane/{paneId}/submit": {
+      "post": {
+        "tags": [
+          "Panes"
+        ],
+        "summary": "Type terminal data and one submit key",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PaneId"
+          },
+          {
+            "$ref": "#/components/parameters/Session"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "data",
+                  "key"
+                ],
+                "properties": {
+                  "data": {
+                    "type": "string",
+                    "maxLength": 65536
+                  },
+                  "key": {
+                    "type": "string",
+                    "enum": [
+                      "Enter",
+                      "Tab"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Action"
+          }
+        }
+      }
+    },
+    "/api/pane/{paneId}/keys": {
+      "post": {
+        "tags": [
+          "Panes"
+        ],
+        "summary": "Send terminal key names",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PaneId"
+          },
+          {
+            "$ref": "#/components/parameters/Session"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "keys"
+                ],
+                "properties": {
+                  "keys": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Action"
+          }
+        }
+      }
+    },
+    "/api/pane/{paneId}/upload": {
+      "post": {
+        "tags": [
+          "Panes"
+        ],
+        "summary": "Store an image for an agent to reference",
+        "description": "Accepted image MIME types: PNG, JPEG, WebP, GIF. Maximum file size: 10 MiB. The returned host path is for local terminal use; do not expose it to untrusted remote clients.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PaneId"
+          },
+          {
+            "$ref": "#/components/parameters/Session"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "file"
+                ],
+                "properties": {
+                  "file": {
+                    "type": "string",
+                    "format": "binary"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Stored upload",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UploadResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/pane/{paneId}/close": {
+      "post": {
+        "tags": [
+          "Panes"
+        ],
+        "summary": "Close a pane",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PaneId"
+          },
+          {
+            "$ref": "#/components/parameters/Session"
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Action"
+          }
+        }
+      }
+    },
+    "/api/tab": {
+      "post": {
+        "tags": [
+          "Workspace"
+        ],
+        "summary": "Create a tab with a fresh shell pane",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Session"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateTabRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Create"
+          }
+        }
+      }
+    },
+    "/api/tab/{tabId}": {
+      "patch": {
+        "tags": [
+          "Workspace"
+        ],
+        "summary": "Rename a tab",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/TabId"
+          },
+          {
+            "$ref": "#/components/parameters/Session"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "label"
+                ],
+                "properties": {
+                  "label": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Action"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Workspace"
+        ],
+        "summary": "Close a tab",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/TabId"
+          },
+          {
+            "$ref": "#/components/parameters/Session"
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Action"
+          }
+        }
+      }
+    },
+    "/api/workspace": {
+      "post": {
+        "tags": [
+          "Workspace"
+        ],
+        "summary": "Create a workspace",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Session"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateWorkspaceRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Create"
+          }
+        }
+      }
+    },
+    "/api/workspace/{workspaceId}": {
+      "delete": {
+        "tags": [
+          "Workspace"
+        ],
+        "summary": "Close a workspace",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/WorkspaceId"
+          },
+          {
+            "$ref": "#/components/parameters/Session"
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Action"
+          }
+        }
+      }
+    },
+    "/api/worktree": {
+      "post": {
+        "tags": [
+          "Workspace"
+        ],
+        "summary": "Create a linked Git worktree",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Session"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateWorktreeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Create"
+          }
+        }
+      }
+    },
+    "/api/worktree/{workspaceId}": {
+      "delete": {
+        "tags": [
+          "Workspace"
+        ],
+        "summary": "Remove a linked worktree",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/WorkspaceId"
+          },
+          {
+            "$ref": "#/components/parameters/Session"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "force": {
+                    "type": "boolean",
+                    "default": false
+                  },
+                  "requestId": {
+                    "$ref": "#/components/schemas/RequestId"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Action"
+          }
+        }
+      }
+    },
+    "/api/focus/{paneId}": {
+      "post": {
+        "tags": [
+          "Panes"
+        ],
+        "summary": "Focus a pane in Herdr",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PaneId"
+          },
+          {
+            "$ref": "#/components/parameters/Session"
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Action"
+          }
+        }
+      }
+    },
+    "/api/workspace/{workspaceId}/files": {
+      "get": {
+        "tags": [
+          "Workspace"
+        ],
+        "summary": "List bounded workspace files",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/WorkspaceId"
+          },
+          {
+            "$ref": "#/components/parameters/PaneIdQuery"
+          },
+          {
+            "$ref": "#/components/parameters/Session"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Workspace-relative entries",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceFiles"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/workspace/{workspaceId}/file": {
+      "get": {
+        "tags": [
+          "Workspace"
+        ],
+        "summary": "Read a bounded workspace file preview",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/WorkspaceId"
+          },
+          {
+            "name": "path",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/PaneIdQuery"
+          },
+          {
+            "$ref": "#/components/parameters/Session"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "UTF-8 or base64 content",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceFile"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/workspace/{workspaceId}/git": {
+      "get": {
+        "tags": [
+          "Workspace"
+        ],
+        "summary": "Read workspace Git status",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/WorkspaceId"
+          },
+          {
+            "$ref": "#/components/parameters/PaneIdQuery"
+          },
+          {
+            "$ref": "#/components/parameters/Session"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Repository status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GitStatus"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/workspace/{workspaceId}/diff": {
+      "get": {
+        "tags": [
+          "Workspace"
+        ],
+        "summary": "Read a bounded unified Git diff",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/WorkspaceId"
+          },
+          {
+            "name": "path",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/PaneIdQuery"
+          },
+          {
+            "$ref": "#/components/parameters/Session"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Unified patch",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GitDiff"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/notifications/prefs": {
+      "get": {
+        "tags": [
+          "Notifications"
+        ],
+        "summary": "Read relay-wide notification preferences",
+        "responses": {
+          "200": {
+            "description": "Preferences",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotifyPrefs"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Notifications"
+        ],
+        "summary": "Update notification preferences",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NotifyPrefs"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated preferences",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotifyPrefs"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/notifications/snooze": {
+      "post": {
+        "tags": [
+          "Notifications"
+        ],
+        "summary": "Set or clear notification snooze",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "snoozedUntil"
+                ],
+                "properties": {
+                  "snoozedUntil": {
+                    "type": [
+                      "number",
+                      "null"
+                    ],
+                    "description": "Unix epoch milliseconds; null clears the snooze."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Applied deadline",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "snoozedUntil": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/subscribe": {
+      "post": {
+        "tags": [
+          "Notifications"
+        ],
+        "summary": "Register a Web Push subscription",
+        "description": "Submit the standard browser PushSubscription JSON object. Requires an authorized device.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "endpoint",
+                  "keys"
+                ],
+                "properties": {
+                  "endpoint": {
+                    "type": "string",
+                    "format": "uri"
+                  },
+                  "keys": {
+                    "type": "object",
+                    "properties": {
+                      "p256dh": {
+                        "type": "string"
+                      },
+                      "auth": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Stored"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Notifications"
+        ],
+        "summary": "Remove a Web Push subscription",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "endpoint"
+                ],
+                "properties": {
+                  "endpoint": {
+                    "type": "string",
+                    "format": "uri"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Removed"
+          }
+        }
+      }
+    },
+    "/api/live": {
+      "get": {
+        "tags": [
+          "WebSockets"
+        ],
+        "summary": "Upgrade to raw terminal/control WebSocket",
+        "description": "This endpoint requires `Upgrade: websocket`. It is documented in the API introduction rather than represented as OpenAPI messages.",
+        "responses": {
+          "101": {
+            "description": "WebSocket upgrade accepted"
+          },
+          "426": {
+            "description": "WebSocket upgrade required"
+          }
+        }
+      }
+    },
+    "/acp": {
+      "get": {
+        "tags": [
+          "WebSockets"
+        ],
+        "summary": "Upgrade to the ACP v2 JSON-RPC WebSocket",
+        "description": "Read the full ACP WebSocket guide before implementing this endpoint.",
+        "responses": {
+          "101": {
+            "description": "WebSocket upgrade accepted"
+          },
+          "426": {
+            "description": "WebSocket upgrade required"
+          }
+        }
+      }
+    },
+    "/api/push-test": {
+      "post": {
+        "tags": [
+          "Notifications"
+        ],
+        "summary": "Send a diagnostic Web Push notification",
+        "description": "Requires push to be configured, an authorized device, and at least one stored subscription.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "title",
+                  "body"
+                ],
+                "properties": {
+                  "title": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
+                  "body": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512
+                  },
+                  "paneId": {
+                    "type": "string",
+                    "maxLength": 128
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "At least one subscriber accepted delivery.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "subscribers"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": true
+                    },
+                    "subscribers": {
+                      "type": "integer",
+                      "minimum": 1
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Push is disabled or no client is subscribed."
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "parameters": {
+      "Session": {
+        "name": "session",
+        "in": "query",
+        "description": "Known relay session name; omit for the primary session.",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "PaneId": {
+        "name": "paneId",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      },
+      "PaneIdQuery": {
+        "name": "paneId",
+        "in": "query",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "WorkspaceId": {
+        "name": "workspaceId",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      },
+      "TabId": {
+        "name": "tabId",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      },
+      "Lines": {
+        "name": "lines",
+        "in": "query",
+        "schema": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10000,
+          "default": 200
+        }
+      }
+    },
+    "responses": {
+      "Forbidden": {
+        "description": "Access, origin, identity, or device authorization was rejected.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "Action": {
+        "description": "Herdr mutation outcome",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ActionResponse"
+            }
+          }
+        }
+      },
+      "Create": {
+        "description": "Creation result",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/CreateResponse"
+            }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "type": "string"
+          }
+        }
+      },
+      "RequestId": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9._:-]{1,128}$",
+        "description": "Optional idempotency key for supported mutations."
+      },
+      "ActionResponse": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "ok"
+            ],
+            "properties": {
+              "ok": {
+                "const": true
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "ok",
+              "error"
+            ],
+            "properties": {
+              "ok": {
+                "const": false
+              },
+              "error": {
+                "type": "string"
+              },
+              "textDelivered": {
+                "type": "boolean"
+              },
+              "deliveryAmbiguous": {
+                "type": "boolean"
+              }
+            }
+          }
+        ]
+      },
+      "ReplyRequest": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string",
+            "default": ""
+          },
+          "submit": {
+            "type": "boolean",
+            "default": true
+          },
+          "requestId": {
+            "$ref": "#/components/schemas/RequestId"
+          }
+        }
+      },
+      "UploadResponse": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "ok",
+              "path"
+            ],
+            "properties": {
+              "ok": {
+                "const": true
+              },
+              "path": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "$ref": "#/components/schemas/Error"
+          }
+        ]
+      },
+      "CreatedPane": {
+        "type": "object",
+        "required": [
+          "paneId",
+          "workspaceId",
+          "workspaceLabel",
+          "tabId",
+          "cwd"
+        ],
+        "properties": {
+          "paneId": {
+            "type": "string"
+          },
+          "workspaceId": {
+            "type": "string"
+          },
+          "workspaceLabel": {
+            "type": "string"
+          },
+          "tabId": {
+            "type": "string"
+          },
+          "cwd": {
+            "type": "string"
+          }
+        }
+      },
+      "CreateResponse": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "ok",
+              "pane"
+            ],
+            "properties": {
+              "ok": {
+                "const": true
+              },
+              "pane": {
+                "$ref": "#/components/schemas/CreatedPane"
+              }
+            }
+          },
+          {
+            "$ref": "#/components/schemas/ActionResponse"
+          }
+        ]
+      },
+      "CreateTabRequest": {
+        "type": "object",
+        "required": [
+          "workspaceId"
+        ],
+        "properties": {
+          "workspaceId": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "cwd": {
+            "type": "string"
+          },
+          "requestId": {
+            "$ref": "#/components/schemas/RequestId"
+          }
+        }
+      },
+      "CreateWorkspaceRequest": {
+        "type": "object",
+        "properties": {
+          "cwd": {
+            "type": "string",
+            "description": "Defaults to the relay host user's home directory."
+          },
+          "label": {
+            "type": "string"
+          },
+          "requestId": {
+            "$ref": "#/components/schemas/RequestId"
+          }
+        }
+      },
+      "CreateWorktreeRequest": {
+        "type": "object",
+        "required": [
+          "workspaceId"
+        ],
+        "properties": {
+          "workspaceId": {
+            "type": "string"
+          },
+          "branch": {
+            "type": "string"
+          },
+          "base": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "requestId": {
+            "$ref": "#/components/schemas/RequestId"
+          }
+        }
+      },
+      "PaneRead": {
+        "type": "object",
+        "required": [
+          "paneId",
+          "text",
+          "truncated",
+          "revision"
+        ],
+        "properties": {
+          "paneId": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string",
+            "description": "ANSI/SGR terminal output."
+          },
+          "truncated": {
+            "type": "boolean"
+          },
+          "revision": {
+            "type": "integer"
+          }
+        }
+      },
+      "BridgeConfig": {
+        "type": "object",
+        "required": [
+          "push",
+          "vapidPublicKey"
+        ],
+        "properties": {
+          "push": {
+            "type": "boolean"
+          },
+          "vapidPublicKey": {
+            "type": "string"
+          },
+          "acp": {
+            "type": "boolean"
+          },
+          "build": {
+            "type": "string"
+          }
+        }
+      },
+      "Snapshot": {
+        "type": "object",
+        "required": [
+          "bridge",
+          "agents",
+          "shellPanes",
+          "workspaces",
+          "tabs",
+          "sessions",
+          "ts"
+        ],
+        "properties": {
+          "bridge": {
+            "type": "string",
+            "enum": [
+              "connected",
+              "disconnected"
+            ]
+          },
+          "agents": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Agent"
+            }
+          },
+          "shellPanes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Agent"
+            }
+          },
+          "workspaces": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "tabs": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "sessions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "isPrimary": {
+                  "type": "boolean"
+                },
+                "reachable": {
+                  "type": "boolean"
+                },
+                "agents": {
+                  "type": "integer"
+                },
+                "working": {
+                  "type": "integer"
+                },
+                "blocked": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "ts": {
+            "type": "integer"
+          }
+        }
+      },
+      "Agent": {
+        "type": "object",
+        "properties": {
+          "paneId": {
+            "type": "string"
+          },
+          "workspaceId": {
+            "type": "string"
+          },
+          "workspaceLabel": {
+            "type": "string"
+          },
+          "tabId": {
+            "type": "string"
+          },
+          "agent": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "idle",
+              "working",
+              "blocked",
+              "done",
+              "unknown"
+            ]
+          },
+          "cwd": {
+            "type": "string"
+          },
+          "focused": {
+            "type": "boolean"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "agent",
+              "shell"
+            ]
+          }
+        }
+      },
+      "WorkspaceFiles": {
+        "type": "object",
+        "properties": {
+          "workspaceId": {
+            "type": "string"
+          },
+          "root": {
+            "type": "string"
+          },
+          "entries": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "file",
+                    "directory"
+                  ]
+                }
+              }
+            }
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        }
+      },
+      "WorkspaceFile": {
+        "type": "object",
+        "properties": {
+          "workspaceId": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "mediaType": {
+            "type": "string"
+          },
+          "encoding": {
+            "type": "string",
+            "enum": [
+              "utf8",
+              "base64"
+            ]
+          },
+          "content": {
+            "type": "string"
+          },
+          "size": {
+            "type": "integer"
+          }
+        }
+      },
+      "GitStatus": {
+        "type": "object",
+        "properties": {
+          "workspaceId": {
+            "type": "string"
+          },
+          "isRepo": {
+            "type": "boolean"
+          },
+          "branch": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "upstream": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ahead": {
+            "type": "integer"
+          },
+          "behind": {
+            "type": "integer"
+          },
+          "insertions": {
+            "type": "integer"
+          },
+          "deletions": {
+            "type": "integer"
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          }
+        }
+      },
+      "GitDiff": {
+        "type": "object",
+        "properties": {
+          "workspaceId": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "patch": {
+            "type": "string"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        }
+      },
+      "NotifyPrefs": {
+        "type": "object",
+        "properties": {
+          "blocked": {
+            "type": "boolean"
+          },
+          "done": {
+            "type": "boolean"
+          },
+          "updates": {
+            "type": "boolean"
+          }
+        }
+      },
+      "UpdateStatus": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "lastCheckSucceeded": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "current": {
+            "type": "string"
+          },
+          "latest": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "latestUrl": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "releaseAvailable": {
+            "type": "boolean"
+          },
+          "bridgeStale": {
+            "type": "boolean"
+          },
+          "checkedAt": {
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        }
+      }
+    },
+    "securitySchemes": {
+      "TailscaleServeIdentity": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "Tailscale-User-Login",
+        "description": "Injected by Tailscale Serve for remote traffic. Do not manufacture this header; configure `COLLIE_TRUSTED_USER` on the relay."
+      },
+      "NativeMutation": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-Herdr-Client",
+        "description": "Set to `herdr-mobile-v1` only for a native non-browser mutation without an Origin header. Browser requests use same-origin protection instead."
+      }
+    }
+  }
+}

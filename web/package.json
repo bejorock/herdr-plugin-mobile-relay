@@ -1,6 +1,6 @@
 {
   "name": "rad-herdr-mobile-relay-web",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "private": true,
   "license": "MIT",
   "type": "module",
@@ -17,7 +17,8 @@
     "@fontsource/jetbrains-mono": "^5.2.8",
     "lucide-react": "^0.564.0",
     "react": "^19.2.0",
-    "react-dom": "^19.2.0"
+    "react-dom": "^19.2.0",
+    "redoc": "^2.5.0"
   },
   "devDependencies": {
     "@playwright/test": "^1.61.1",

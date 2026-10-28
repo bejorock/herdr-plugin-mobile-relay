@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.6] - 2026-10-28
+
+### Added
+
+- Ship an interactive Redoc developer portal at `/developer.html`, backed by a same-origin OpenAPI 3.1 document at `/developer/openapi.json`.
+- Document REST control-plane routes, security requirements, the `/api/live` terminal WebSocket protocol, and the ACP WebSocket integration path for third-party client authors.
+
 ## [1.0.5] - 2026-10-28
 
 ### Fixed

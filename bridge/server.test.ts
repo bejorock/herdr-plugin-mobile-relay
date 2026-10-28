@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { resolve } from "node:path";
 
 import {
   checkAccess,
@@ -217,6 +218,28 @@ describe("static frontend recovery", () => {
     const response = await serveStatic("/", `/tmp/rad-herdr-mobile-relay-missing-${crypto.randomUUID()}`);
     expect(response.status).toBe(503);
     expect(await response.text()).toContain("frontend not built");
+  });
+});
+
+describe("developer documentation assets", () => {
+  const WEB = resolve(import.meta.dir, "../web/dist");
+
+  test("ships a parseable OpenAPI reference alongside the Redoc page", async () => {
+    const spec = await Bun.file(`${WEB}/developer/openapi.json`).json() as {
+      openapi?: string;
+      paths?: Record<string, unknown>;
+    };
+    expect(spec.openapi).toBe("3.1.0");
+    expect(spec.paths).toEqual(expect.objectContaining({
+      "/api/snapshot": expect.anything(),
+      "/api/live": expect.anything(),
+      "/acp": expect.anything(),
+    }));
+
+    const page = await serveStatic("/developer.html", WEB);
+    expect(page.status).toBe(200);
+    expect(page.headers.get("content-type")).toContain("text/html");
+    expect(await page.text()).toContain("Developer reference");
   });
 });
 

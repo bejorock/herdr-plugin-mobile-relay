@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.10] - 2026-10-28
+
+### Fixed
+
+- Document fish-compatible macOS configuration commands and avoid assuming `.env.example` is in the user's current directory.
+- Parse relay `.env` configuration as dotenv data rather than sourcing it as shell code.
+
 ## [1.0.9] - 2026-10-28
 
 ### Added

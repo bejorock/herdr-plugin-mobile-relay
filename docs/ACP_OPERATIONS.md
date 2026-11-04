@@ -6,11 +6,29 @@ This guide is for operators of Herdr Mobile Relay's experimental ACP adapter.
 
 ACP is enabled by default. Edit the plugin configuration file when you need to set remote access or explicitly disable ACP:
 
+**bash / zsh:**
+
 ```bash
 config_dir="$(herdr plugin config-dir rad.herdr-mobile-relay)"
-install -d -m 700 "$config_dir"
-install -m 600 .env.example "$config_dir/.env"  # only when it does not yet exist
+mkdir -p "$config_dir"
+chmod 700 "$config_dir"
+# Create this only when it does not already exist.
+printf '%s\n' 'COLLIE_TRUSTED_USER=you@example.com' > "$config_dir/.env"
+chmod 600 "$config_dir/.env"
 ```
+
+**fish:**
+
+```fish
+set config_dir (herdr plugin config-dir rad.herdr-mobile-relay)
+mkdir -p "$config_dir"
+chmod 700 "$config_dir"
+# Create this only when it does not already exist.
+printf '%s\n' 'COLLIE_TRUSTED_USER=you@example.com' > "$config_dir/.env"
+chmod 600 "$config_dir/.env"
+```
+
+Replace `you@example.com` with the Tailscale login allowed to operate the relay. `.env.example` lives in the plugin checkout; do not copy it from an arbitrary current directory.
 
 To deliberately disable ACP:
 

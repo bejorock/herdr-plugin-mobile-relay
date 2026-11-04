@@ -43,6 +43,24 @@ JSON
     );
   });
 
+  test("loads dotenv configuration as data instead of executing shell fragments", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "rad-herdr-mobile-relay-dotenv-"));
+    temporaryDirectories.push(directory);
+    const config = join(directory, "config");
+    await mkdir(config, { recursive: true });
+    const marker = join(directory, "must-not-exist");
+    await writeFile(
+      join(config, ".env"),
+      `# valid configuration\nCOLLIE_TRUSTED_USER=person@example.com\nIGNORED=$(touch ${marker})\n`,
+    );
+    const script = resolve(import.meta.dir, "../scripts/collie-ctl.sh");
+    const result = Bun.spawnSync(["/bin/bash", "-c", 'source "$1"; test "$COLLIE_TRUSTED_USER" = person@example.com; test -n "$IGNORED"; test ! -e "$2"', "bash", script, marker], {
+      env: { ...process.env, HOME: directory, HERDR_PLUGIN_CONFIG_DIR: config, PATH: "/usr/bin:/bin" },
+      stdout: "pipe", stderr: "pipe",
+    });
+    expect(result.exitCode, result.stderr.toString()).toBe(0);
+  });
+
   test("writes a systemd unit with an unquoted absolute working directory", async () => {
     const directory = await mkdtemp(join(tmpdir(), "rad-herdr-mobile-relay-unit-"));
     temporaryDirectories.push(directory);

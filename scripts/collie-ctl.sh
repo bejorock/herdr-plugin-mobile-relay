@@ -53,8 +53,29 @@ if [ "$CONFIG_DIR" != "${HOME}/.config/collie" ] && [ -f "${HOME}/.config/collie
   echo "note: Collie's ${HOME}/.config/collie/.env is not reused; Herdr Mobile Relay config lives in ${CONFIG_DIR}/.env." >&2
 fi
 
-# Source the plugin .env so both this script and the systemd unit share one config source.
-if [ -f "${CONFIG_DIR}/.env" ]; then set -a; . "${CONFIG_DIR}/.env"; set +a; fi
+# Source the plugin .env so both this script and the systemd unit share one config source. It is
+# deliberately a dotenv file, not arbitrary shell code: accepting only KEY=VALUE lines prevents a
+# configuration typo or copied shell fragment from running commands when a Herdr action starts.
+load_dotenv() {
+  local file="$1" line key value
+  [ -f "$file" ] || return 0
+  while IFS= read -r line || [ -n "$line" ]; do
+    line="${line#"${line%%[![:space:]]*}"}"
+    [ -z "$line" ] && continue
+    [[ "$line" == \#* ]] && continue
+    if [[ "$line" =~ ^([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]]; then
+      key="${BASH_REMATCH[1]}"
+      value="${BASH_REMATCH[2]}"
+      # Match systemd EnvironmentFile's simple quote convention for common values; reject anything
+      # that would need shell evaluation rather than silently interpreting it as program text.
+      if [[ "$value" =~ ^\"(.*)\"$ ]] || [[ "$value" =~ ^\'(.*)\'$ ]]; then value="${BASH_REMATCH[1]}"; fi
+      export "$key=$value"
+    else
+      echo "warning: ignoring invalid line in ${file}" >&2
+    fi
+  done < "$file"
+}
+load_dotenv "${CONFIG_DIR}/.env"
 
 normalize_port() {
   local raw="${1:-}" fallback="${2:-8787}" normalized

@@ -86,19 +86,35 @@ herdr plugin install bejorock/herdr-plugin-mobile-relay --yes
 Herdr runs the manifest build step during installation. That step installs both Bun dependency
 trees, typechecks the relay and browser client, and produces the static web bundle.
 
-Create the private configuration file before starting remote access:
+Create the private configuration file before starting remote access. You only need to set the trusted Tailscale identity; all other settings use safe defaults. Replace the example email with the login email of the Tailscale account that may control the relay.
+
+**bash / zsh:**
 
 ```bash
 config_dir="$(herdr plugin config-dir rad.herdr-mobile-relay)"
-install -d -m 700 "$config_dir"
-install -m 600 .env.example "$config_dir/.env"
+mkdir -p "$config_dir"
+chmod 700 "$config_dir"
+printf '%s\n' \
+  '# Permit only this Tailscale account through Tailscale Serve.' \
+  'COLLIE_TRUSTED_USER=you@example.com' \
+  > "$config_dir/.env"
+chmod 600 "$config_dir/.env"
 ```
 
-Edit `$config_dir/.env` and set at least the trusted Tailscale identity for remote use:
+**fish:**
 
-```dotenv
-COLLIE_TRUSTED_USER=you@example.com
+```fish
+set config_dir (herdr plugin config-dir rad.herdr-mobile-relay)
+mkdir -p "$config_dir"
+chmod 700 "$config_dir"
+printf '%s\n' \
+  '# Permit only this Tailscale account through Tailscale Serve.' \
+  'COLLIE_TRUSTED_USER=you@example.com' \
+  > "$config_dir/.env"
+chmod 600 "$config_dir/.env"
 ```
+
+To configure optional settings later, copy the repository's `.env.example` into this same configuration directory and preserve the `COLLIE_TRUSTED_USER` value.
 
 Then start the service:
 

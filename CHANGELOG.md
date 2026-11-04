@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.11] - 2026-10-28
+
+### Added
+
+- Support `COLLIE_TRUSTED_USERS` for explicit multi-user Tailscale identity allowlists.
+- Support explicit `COLLIE_ALLOW_ANY_TAILNET_USER=on` mode for any authenticated identity permitted by tailnet ACLs; anonymous/public requests remain denied.
+
 ## [1.0.10] - 2026-10-28
 
 ### Fixed

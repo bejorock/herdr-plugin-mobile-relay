@@ -51,7 +51,7 @@ A normal remote deployment uses Tailscale Serve as an HTTPS/WSS reverse proxy. D
 For a Serve-backed request to pass, all of these apply:
 
 1. Its public `Host` must be allowed by the relay configuration.
-2. Tailscale Serve injects `Tailscale-User-Login`; it must equal `COLLIE_TRUSTED_USER` (unless the request is a direct loopback call).
+2. Tailscale Serve injects `Tailscale-User-Login`; it must match `COLLIE_TRUSTED_USER` or `COLLIE_TRUSTED_USERS`, unless the operator explicitly set `COLLIE_ALLOW_ANY_TAILNET_USER=on` (or the request is direct loopback). Allow-any still requires a non-empty Serve identity and a Tailscale ACL that permits the caller to reach this machine; it never allows public/anonymous requests.
 3. Browser mutations must be same-origin. A native non-browser client making a mutation without an `Origin` header must send:
 
    ```http

@@ -171,7 +171,9 @@ Copy [.env.example](.env.example) to `.env` in that directory. Important setting
 | `COLLIE_POLL_IDLE_MS` | `12000` | Safety-net polling while event subscriptions are healthy. |
 | `COLLIE_READ_LINES` | `200` | Default bounded pane read size. |
 | `COLLIE_NOTIFY_DELAY_MS` | `30000` | Notification debounce interval. |
-| `COLLIE_TRUSTED_USER` | unset | Required matching proxy identity for remote API access. |
+| `COLLIE_TRUSTED_USER` | unset | One exact allowed proxy identity (backward compatible). |
+| `COLLIE_TRUSTED_USERS` | unset | Additional comma-separated exact proxy identities allowed remotely. |
+| `COLLIE_ALLOW_ANY_TAILNET_USER` | `off` | Explicitly allow any authenticated Tailscale Serve identity; tailnet ACLs still apply. |
 | `COLLIE_TRUSTED_USER_HEADER` | `Tailscale-User-Login` | Identity header injected by the trusted proxy. |
 | `COLLIE_PUBLIC_HOSTS` | derived for Tailscale | Allowed public `host[:port]` values. |
 | `COLLIE_ALLOWED_ORIGINS` | unset | Extra full browser origins for custom reverse proxies. |
@@ -189,6 +191,29 @@ Tailscale Serve applications are left intact.
 
 The default public port matches `COLLIE_PORT` rather than taking over port 443. Set
 `COLLIE_SERVE_PORT=443` only when this relay should own the root MagicDNS HTTPS URL.
+
+### Remote identity policy
+
+Remote access always requires a non-empty identity injected by Tailscale Serve. This is private
+**tailnet** access, not public Internet access; Tailscale ACLs remain the first network boundary.
+Choose one policy in the plugin `.env`, then restart the relay:
+
+```dotenv
+# Only one person (the existing/default policy):
+COLLIE_TRUSTED_USER=you@example.com
+
+# Several explicitly named people (can be combined with the legacy single-user setting):
+COLLIE_TRUSTED_USERS=you@example.com,teammate@example.com
+
+# Every authenticated identity that your tailnet ACL permits to reach this Mac:
+# Do not use with Funnel; Serve-only, and treat every permitted identity as a remote-shell peer.
+COLLIE_ALLOW_ANY_TAILNET_USER=on
+```
+
+Leaving all three unset denies remote requests. The allow-any setting never accepts anonymous
+requests: a missing Tailscale identity header remains a `403`. For teams, prefer Tailscale ACLs plus
+`COLLIE_TRUSTED_USERS` whenever practical. These choices authorize both read and terminal-driving
+relay routes; use the optional device gate below when a trusted proxy can provide per-device IDs.
 
 ### Headscale and custom proxies
 

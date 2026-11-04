@@ -63,6 +63,8 @@ function cfg(overrides: Partial<Config> = {}): Config {
     readLines: 200,
     submitKeys: ["Enter"],
     trustedUser: "me@example.com",
+    trustedUsers: [],
+    allowAnyTrustedUser: false,
     trustedUserHeader: "tailscale-user-login",
     deviceHeader: "",
     deviceAllowlist: [],
@@ -340,6 +342,18 @@ describe("checkAccess — same-origin / CSRF gate", () => {
 });
 
 describe("checkAccess — Tailscale identity gate", () => {
+  test("allows configured additional Tailscale users but rejects other identities", () => {
+    const multi = cfg({ publicHosts: ["collie.example.ts.net"], trustedUsers: ["teammate@example.com", "reader@example.com"] });
+    expect(checkAccess(req({ host: "collie.example.ts.net", "tailscale-user-login": "teammate@example.com" }), multi)).toEqual({ ok: true });
+    expect(checkAccess(req({ host: "collie.example.ts.net", "tailscale-user-login": "other@example.com" }), multi)).toEqual({ ok: false, reason: "identity not trusted" });
+  });
+
+  test("allow-any mode requires a proxy identity but accepts any Tailscale user", () => {
+    const anyTailnetUser = cfg({ publicHosts: ["collie.example.ts.net"], trustedUser: "", trustedUsers: [], allowAnyTrustedUser: true });
+    expect(checkAccess(req({ host: "collie.example.ts.net", "tailscale-user-login": "teammate@example.com" }), anyTailnetUser)).toEqual({ ok: true });
+    expect(checkAccess(req({ host: "collie.example.ts.net" }), anyTailnetUser)).toEqual({ ok: false, reason: "identity required" });
+  });
+
   test("with no trusted user, direct loopback passes but every remote identity fails closed", () => {
     expect(checkAccess(req({ host: "127.0.0.1:8787" }), cfg({ trustedUser: "" }))).toEqual({ ok: true });
     expect(

@@ -15,6 +15,8 @@ const KEYS = [
   "COLLIE_READ_LINES",
   "COLLIE_SUBMIT_KEYS",
   "COLLIE_TRUSTED_USER",
+  "COLLIE_TRUSTED_USERS",
+  "COLLIE_ALLOW_ANY_TAILNET_USER",
   "COLLIE_TRUSTED_USER_HEADER",
   "COLLIE_DEVICE_HEADER",
   "COLLIE_DEVICE_ALLOWLIST",
@@ -60,6 +62,8 @@ describe("loadConfig", () => {
     expect(cfg.readLines).toBe(200);
     expect(cfg.submitKeys).toEqual(["Enter"]);
     expect(cfg.trustedUser).toBe("");
+    expect(cfg.trustedUsers).toEqual([]);
+    expect(cfg.allowAnyTrustedUser).toBe(false);
     expect(cfg.trustedUserHeader).toBe("tailscale-user-login");
     expect(cfg.allowedOrigins).toEqual([]);
     expect(cfg.notifyDelayMs).toBe(30_000);
@@ -119,6 +123,18 @@ describe("loadConfig", () => {
     expect(loadConfig().deviceHeader).toBe("x-herdr-invalid-device-header");
     process.env.COLLIE_DEVICE_HEADER = "   ";
     expect(loadConfig().deviceHeader).toBe("");
+  });
+
+  test("reads a deduplicated trusted-user allowlist and explicit allow-any mode", () => {
+    process.env.COLLIE_TRUSTED_USER = " owner@example.com ";
+    process.env.COLLIE_TRUSTED_USERS = " teammate@example.com, owner@example.com, teammate@example.com, ";
+    process.env.COLLIE_ALLOW_ANY_TAILNET_USER = "yes";
+    const cfg = loadConfig();
+    expect(cfg.trustedUser).toBe("owner@example.com");
+    expect(cfg.trustedUsers).toEqual(["teammate@example.com", "owner@example.com"]);
+    expect(cfg.allowAnyTrustedUser).toBe(true);
+    process.env.COLLIE_ALLOW_ANY_TAILNET_USER = "garbage";
+    expect(loadConfig().allowAnyTrustedUser).toBe(false);
   });
 
   test("defaults blank or invalid trusted-user header names", () => {

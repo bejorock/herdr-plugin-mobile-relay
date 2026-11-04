@@ -1054,9 +1054,13 @@ export function startServer(opts: {
       );
     }
   }
-  if (!cfg.trustedUser) {
+  if (!remoteIdentityConfigured(cfg)) {
     console.warn(
-      `[bridge] remote API access is disabled until COLLIE_TRUSTED_USER is set; direct loopback remains available.`,
+      `[bridge] remote API access is disabled until COLLIE_TRUSTED_USER, COLLIE_TRUSTED_USERS, or COLLIE_ALLOW_ANY_TAILNET_USER is configured; direct loopback remains available.`,
+    );
+  } else if (cfg.allowAnyTrustedUser) {
+    console.warn(
+      `[bridge] remote API access allows any authenticated proxy identity; enforce tailnet membership with Tailscale ACLs.`,
     );
   }
   if (cfg.publicHosts.length === 0 && cfg.allowedOrigins.length === 0) {
@@ -2182,8 +2186,9 @@ async function uploadPane(
  *    preflight (which this bridge never grants).
  *  - Reverse-proxy provenance: forwarding/Tailscale headers prevent a forged loopback Host from
  *    receiving direct-on-host exemptions.
- *  - Required remote identity: every non-loopback request needs a configured trusted user and the
- *    matching proxy-injected identity header. Loopback callers remain available without one.
+ *  - Required remote identity: every non-loopback request needs a proxy-injected identity header
+ *    and either an explicit configured allowlist match or the explicit allow-any-tailnet-user mode.
+ *    Loopback callers remain available without one.
  */
 export function checkAccess(
   req: Request,
@@ -2238,14 +2243,14 @@ export function checkAccess(
     return { ok: false, reason: "origin required" };
   }
 
-  if (!trustedLoopback && !cfg.trustedUser) {
+  const login = req.headers.get(cfg.trustedUserHeader)?.trim() ?? "";
+  if (!trustedLoopback && !remoteIdentityConfigured(cfg)) {
     return { ok: false, reason: "remote identity not configured" };
   }
-  const login = req.headers.get(cfg.trustedUserHeader);
-  if (!login && !trustedLoopback) {
+  if (!trustedLoopback && !login) {
     return { ok: false, reason: "identity required" };
   }
-  if (login && cfg.trustedUser && login !== cfg.trustedUser) {
+  if (!trustedLoopback && !isTrustedRemoteLogin(login, cfg)) {
     return { ok: false, reason: "identity not trusted" };
   }
   return { ok: true };
@@ -2267,6 +2272,17 @@ export function isHostAllowed(host: string, cfg: Config): boolean {
       return false;
     }
   });
+}
+
+/** Whether remote identity access is explicitly configured, never inferred from a public host. */
+function remoteIdentityConfigured(cfg: Config): boolean {
+  return cfg.allowAnyTrustedUser || Boolean(cfg.trustedUser) || cfg.trustedUsers.length > 0;
+}
+
+/** Exact allowlist match or explicit any-authenticated-tailnet-user mode. */
+function isTrustedRemoteLogin(login: string, cfg: Config): boolean {
+  if (!login) return false;
+  return cfg.allowAnyTrustedUser || login === cfg.trustedUser || cfg.trustedUsers.includes(login);
 }
 
 function isTrustedLoopbackHost(host: string, cfg: Config): boolean {
@@ -2333,10 +2349,12 @@ export function deviceAuth(req: Request, cfg: Config): DeviceAuth {
     return { enforced: true, device: null, authorized: directLoopback };
   }
   // A proxy-forwarded device header is not identity by itself: clients can often supply arbitrary
-  // request headers to a proxy. Remote device authorization therefore also requires the matching
-  // Tailscale identity configured by the operator. Direct loopback remains the local-operator path.
-  const proxyIdentityVerified = Boolean(
-    cfg.trustedUser && req.headers.get(cfg.trustedUserHeader) === cfg.trustedUser,
+  // request headers to a proxy. Remote device authorization therefore also requires a verified
+  // Tailscale identity accepted by the operator's allowlist/policy. Direct loopback remains the
+  // local-operator path.
+  const proxyIdentityVerified = isTrustedRemoteLogin(
+    req.headers.get(cfg.trustedUserHeader)?.trim() ?? "",
+    cfg,
   );
   const authorized =
     device !== "unknown" &&

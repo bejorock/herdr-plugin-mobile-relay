@@ -114,11 +114,18 @@ export interface Config {
   /** Key sequence sent to submit a reply after the text (agent-dependent; see HERDR_API.md). */
   submitKeys: string[];
   /**
-   * Tailscale identity gate. If set, every non-loopback request must carry a matching
-   * `Tailscale-User-Login` header injected by `tailscale serve`; missing or mismatching identities
-   * are rejected. Direct-loopback callers may omit it. Empty = remote API access disabled.
+   * Legacy single-user Tailscale identity gate. Kept for backward-compatible deployments; its
+   * non-empty value is combined with {@link trustedUsers}. Empty alone does not enable remote access.
    */
   trustedUser: string;
+  /** Additional exact Tailscale login names permitted remotely (comma-separated configuration). */
+  trustedUsers: string[];
+  /**
+   * Explicit opt-in to accept every request carrying a non-empty proxy-injected identity header.
+   * This is still private-tailnet/proxy access, never anonymous/public access, and must not be used
+   * with Tailscale Funnel (which does not inject identity headers).
+   */
+  allowAnyTrustedUser: boolean;
   /** Header carrying the trusted proxy identity; defaults to Tailscale-User-Login. */
   trustedUserHeader: string;
   /**
@@ -193,7 +200,9 @@ export function loadConfig(): Config {
     notifyDelayMs: envInt("COLLIE_NOTIFY_DELAY_MS", 30_000, { min: 0, max: 2_147_483_647 }),
     readLines: envInt("COLLIE_READ_LINES", 200, { min: 1, max: MAX_READ_LINES }),
     submitKeys: submitKeys.length ? submitKeys : ["Enter"],
-    trustedUser: process.env.COLLIE_TRUSTED_USER ?? "",
+    trustedUser: process.env.COLLIE_TRUSTED_USER?.trim() ?? "",
+    trustedUsers: [...new Set(envList("COLLIE_TRUSTED_USERS"))],
+    allowAnyTrustedUser: envBool("COLLIE_ALLOW_ANY_TAILNET_USER", false),
     trustedUserHeader: trustedUserHeader(),
     deviceHeader: deviceHeader(),
     deviceAllowlist: envList("COLLIE_DEVICE_ALLOWLIST"),

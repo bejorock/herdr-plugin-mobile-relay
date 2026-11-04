@@ -131,7 +131,7 @@ A failed, expired, invalid, disconnected, or unauthorised remote interaction doe
 
 - Bind only to loopback; this relay rejects non-loopback bind settings.
 - Use Tailscale Serve or an equally trusted private proxy. **Never use Tailscale Funnel.**
-- Configure `COLLIE_TRUSTED_USER` before remote use.
+- Configure a remote identity policy before remote use: one `COLLIE_TRUSTED_USER`, a comma-separated `COLLIE_TRUSTED_USERS` allowlist, or the explicit `COLLIE_ALLOW_ANY_TAILNET_USER=on` mode. The latter still requires a Tailscale Serve identity header and tailnet ACL permission; it is never public access.
 - Treat ACP write access as remote shell authority.
 - ACP session IDs are opaque. ACP responses do not contain Herdr pane IDs, native agent IDs, transcript paths, or private upload paths.
 - Images are written to server-generated owner-only files. Native prompts can reference the private path; ACP transcript replay redacts it.

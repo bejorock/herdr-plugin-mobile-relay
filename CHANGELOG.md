@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.0.14] - 2026-11-04
+
+### Fixed
+
+- Make Claude ACP prompts and durable recovery independent of the cross-process Claude hook socket: securely discover transcripts only by the exact Herdr-reported native Claude UUID under `~/.claude/projects`.
+
+### Validated
+
+- Live-tested Claude ACP lifecycle: create → proof-confirmed prompt → close pane → `session/resume` into a replacement pane with the same native Claude UUID and opaque ACP session ID.
+
 ## [1.0.13] - 2026-11-04
 
 ### Fixed

@@ -1,4 +1,4 @@
-import { lstat, realpath } from "node:fs/promises";
+import { lstat, realpath, readdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, relative, resolve } from "node:path";
 
@@ -17,12 +17,14 @@ export interface ClaudeTranscriptFs {
   realpath(path: string): Promise<string>;
   lstat(path: string): Promise<{ isFile(): boolean; isSymbolicLink(): boolean; size: number }>;
   readFile(path: string): Promise<string>;
+  readdir?(path: string, options: { withFileTypes: true }): Promise<Array<{ name: string; isDirectory(): boolean; isFile(): boolean; isSymbolicLink(): boolean }>>;
 }
 
 const nodeFs: ClaudeTranscriptFs = {
   realpath,
   lstat,
   readFile: async (path) => await Bun.file(path).text(),
+  readdir,
 };
 
 export function claudeProjectsRoot(home: string = homedir()): string {
@@ -47,6 +49,40 @@ export async function readSafeClaudeTranscript(
   if (!stat.isFile() || stat.isSymbolicLink()) throw new Error("Claude transcript must be a regular non-symlink file");
   if (stat.size > (opts.maxBytes ?? MAX_CLAUDE_TRANSCRIPT_BYTES)) throw new Error("Claude transcript exceeds the replay size limit");
   return await fs.readFile(resolved);
+}
+
+const CLAUDE_SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+/**
+ * Derive a private Claude transcript path from Herdr's native UUID without trusting client input.
+ * Search only the known Claude projects root, reject symlink directories/files, and require exactly
+ * one regular `<uuid>.jsonl` result. The discovered result must still pass readSafeClaudeTranscript.
+ */
+export async function findClaudeTranscriptBySessionId(
+  sessionId: string,
+  opts: { home?: string; fs?: ClaudeTranscriptFs } = {},
+): Promise<string> {
+  if (!CLAUDE_SESSION_ID.test(sessionId)) throw new Error("invalid Claude session id");
+  const fs = opts.fs ?? nodeFs;
+  if (!fs.readdir) throw new Error("Claude transcript discovery is unavailable");
+  const root = await fs.realpath(claudeProjectsRoot(opts.home));
+  const matches: string[] = [];
+  for (const project of await fs.readdir(root, { withFileTypes: true })) {
+    if (!project.isDirectory() || project.isSymbolicLink()) continue;
+    const dir = join(root, project.name);
+    for (const entry of await fs.readdir(dir, { withFileTypes: true })) {
+      if (!entry.isFile() || entry.isSymbolicLink() || entry.name !== `${sessionId}.jsonl`) continue;
+      const candidate = join(dir, entry.name);
+      try {
+        await readSafeClaudeTranscript(candidate, opts);
+        matches.push(candidate);
+      } catch {
+        // A malformed, symlinked, or out-of-root candidate is never usable.
+      }
+    }
+  }
+  if (matches.length !== 1) throw new Error(matches.length ? "ambiguous Claude transcript" : "Claude transcript not found");
+  return matches[0]!;
 }
 
 export function parseClaudeTranscript(text: string): ClaudeTranscriptEntry[] {

@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import type { SessionRegistry, SessionRuntime } from "../sessions.ts";
 import type { AgentView } from "../types.ts";
 import { AcpBindingStore, type PersistedAcpBinding } from "./binding-store.ts";
+import { findClaudeTranscriptBySessionId } from "./claude-transcript.ts";
 import type { AcpSessionDescriptor, AcpSessionProvider } from "./types.ts";
 
 /** Derives opaque ACP IDs. Native identifiers never appear in the ID itself. */
@@ -75,6 +76,24 @@ export class LiveAcpSessionRegistry implements AcpSessionProvider {
   persistBinding(id: string): void {
     const binding = this.binding(id);
     if (binding) this.persist(id, binding.runtime, binding.agent);
+  }
+
+  /** Resolve the private Claude transcript from its exact Herdr-native UUID, without a hook. */
+  async discoverClaudeTranscript(id: string): Promise<boolean> {
+    const binding = this.binding(id);
+    const native = binding?.agent.nativeSession;
+    if (!binding || binding.agent.agent !== "claude" || !native) return false;
+    // A prior discovery replaces the live native ID with the private transcript path for prompt
+    // delivery; retain the original Claude UUID in the owner-only durable record.
+    const nativeId = native.kind === "id" ? native.value : this.bindingStore?.get(id)?.nativeValue;
+    if (!nativeId) return false;
+    try {
+      const path = await findClaudeTranscriptBySessionId(nativeId);
+      if (native.kind === "path") return true;
+      return this.bindTranscript(id, path);
+    } catch {
+      return false;
+    }
   }
 
   /** Bind a hook-reported Claude transcript, retaining its original native-ID resume handle. */

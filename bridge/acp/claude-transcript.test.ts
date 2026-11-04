@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { claudeHistoryUpdates, parseClaudeTranscript, readSafeClaudeTranscript, redactRelayUploadPaths } from "./claude-transcript.ts";
+import { claudeHistoryUpdates, findClaudeTranscriptBySessionId, parseClaudeTranscript, readSafeClaudeTranscript, redactRelayUploadPaths } from "./claude-transcript.ts";
 
 describe("Claude transcript adapter", () => {
   test("replays non-sidechain user and assistant text messages", () => {
@@ -19,6 +19,22 @@ describe("Claude transcript adapter", () => {
     expect(redactRelayUploadPaths("Analyze /opt/state/uploads/pane-random.png now")).toBe("Analyze [private relay image] now");
     const entries = parseClaudeTranscript(JSON.stringify({ type: "user", uuid: "u1", message: { role: "user", content: "Analyze the image at: /opt/state/uploads/pane-random.png" } }));
     expect(JSON.stringify(claudeHistoryUpdates("s1", entries))).not.toContain("/opt/state/uploads");
+  });
+
+  test("finds exactly one safe transcript by Herdr-provided Claude UUID", async () => {
+    const id = "123e4567-e89b-42d3-a456-426614174000";
+    const root = "/home/u/.claude/projects";
+    const path = `${root}/-repo/${id}.jsonl`;
+    const fs = {
+      realpath: async (value: string) => value,
+      lstat: async () => ({ isFile: () => true, isSymbolicLink: () => false, size: 1 }),
+      readFile: async () => "",
+      readdir: async (value: string) => value === root
+        ? [{ name: "-repo", isDirectory: () => true, isFile: () => false, isSymbolicLink: () => false }]
+        : [{ name: `${id}.jsonl`, isDirectory: () => false, isFile: () => true, isSymbolicLink: () => false }],
+    };
+    await expect(findClaudeTranscriptBySessionId(id, { home: "/home/u", fs })).resolves.toBe(path);
+    await expect(findClaudeTranscriptBySessionId("not-a-uuid", { home: "/home/u", fs })).rejects.toThrow("invalid");
   });
 
   test("rejects transcript paths outside Claude projects", async () => {

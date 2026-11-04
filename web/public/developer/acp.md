@@ -112,11 +112,11 @@ Resumes a listed session. The `cwd` must exactly match the listed session `cwd`.
 With `replayFrom: {"type":"start"}`:
 
 - Pi adapter replays safe, active-branch JSONL user/assistant/thought history.
-- Claude adapter replays safe non-sidechain user/assistant text history.
+- Claude adapter replays safe non-sidechain user/assistant text history. For fresh Claude sessions, the relay safely discovers the transcript only by the exact Herdr-reported native Claude UUID under Claude's private projects root; it never accepts a client-supplied path.
 - then the relay emits the current `state_update`;
 - then it responds to `session/resume`.
 
-The relay starts a transcript tailer after resume. New durable transcript records appear as complete ACP updates. Pi hooks may additionally deliver lower-latency best-effort chunks.
+The relay starts a transcript tailer after resume. New durable transcript records appear as complete ACP updates. Pi hooks may additionally deliver lower-latency best-effort chunks. Claude recovery uses `claude --resume <stored native session id>` through Herdr and verifies that Herdr reports the same native UUID in the replacement pane; it does not depend on a Claude hook socket.
 
 ### Durable logical resume
 

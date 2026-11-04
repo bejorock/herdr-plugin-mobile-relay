@@ -65,9 +65,14 @@ export class PiAcpPromptSender {
     const binding = this.sessions.binding(input.sessionId);
     if (!binding) throw new Error("Session not found");
     const native = binding.agent.nativeSession;
-    if (!native || native.kind !== "path") {
-      throw new Error("This session does not support safe ACP prompt delivery");
+    if (!native) throw new Error("This session does not support safe ACP prompt delivery");
+    if (native.agent === "claude" && native.kind === "id") {
+      // A new Claude SessionStart names its JSONL before the first prompt creates it. Submit via
+      // Herdr, then discover only the exact `<native UUID>.jsonl` under Claude's private root and
+      // use that transcript as the acceptance proof.
+      return await this.deliverNewClaude(binding, input);
     }
+    if (native.kind !== "path") throw new Error("This session does not support safe ACP prompt delivery");
     if (native.agent === "pi") {
       const result = await this.deliverPi(binding, input, native.value);
       // The proof loop above has just read a safe, real Pi transcript. Only now is this logical
@@ -108,6 +113,31 @@ export class PiAcpPromptSender {
       }
     }
     throw new Error("Prompt delivery could not be confirmed from the native Pi transcript");
+  }
+
+  private async deliverNewClaude(binding: NonNullable<ReturnType<LiveAcpSessionRegistry["binding"]>>, input: AcpPromptInput): Promise<{ messageId: string }> {
+    const imagePaths: string[] = [];
+    for (const image of input.images ?? []) {
+      imagePaths.push(await savePrivateImageUpload({ stateDir: this.stateDir, paneId: binding.agent.paneId, mimeType: image.mimeType, bytes: image.bytes }));
+    }
+    const nativeText = [input.text, ...imagePaths.map((imagePath) => `Analyze the image at: ${imagePath}`)].filter(Boolean).join("\n\n");
+    await promptWhenAgentReady(binding.runtime.herdr, binding.agent.paneId, nativeText);
+    const deadline = Date.now() + PROMPT_CONFIRM_TIMEOUT_MS;
+    while (Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, PROMPT_CONFIRM_POLL_MS));
+      if (!await this.sessions.discoverClaudeTranscript(input.sessionId)) continue;
+      const refreshed = this.sessions.binding(input.sessionId);
+      const path = refreshed?.agent.nativeSession?.kind === "path" ? refreshed.agent.nativeSession.value : undefined;
+      if (!path) continue;
+      try {
+        const entryId = claudeUserMessageIdForText(parseClaudeTranscript(await readSafeClaudeTranscript(path)), nativeText);
+        if (entryId) {
+          this.sessions.persistBinding(input.sessionId);
+          return { messageId: `claude:user:${entryId}` };
+        }
+      } catch { /* wait for Claude's async transcript writer */ }
+    }
+    throw new Error("Prompt delivery could not be confirmed from the native Claude transcript");
   }
 
   private async deliverClaude(binding: NonNullable<ReturnType<LiveAcpSessionRegistry["binding"]>>, input: AcpPromptInput, path: string): Promise<{ messageId: string }> {

@@ -147,19 +147,25 @@ export class HerdrAcpProvisioner {
     kind: string,
     args: string[],
   ): Promise<AgentInfo> {
-    const started = await runtime.herdr.startAgent({ paneId: pane.paneId, kind, name: kind, args });
-    if (!started.interactiveReady || !started.agent) throw new Error("Herdr did not confirm the requested agent is ready");
+    const started = await runtime.herdr.startAgent({ paneId: pane.paneId, kind, name: kind, args, timeoutMs: 30_000 });
+    // Herdr can acknowledge agent.start before it reports either an agent identity or interactive
+    // readiness. The native binding discovered by getAgent is the only acceptance proof ACP trusts.
+    // Do not reject this early acknowledgement: poll it to that proof (or timed-out failure).
     return await this.waitForNativeSession(runtime.herdr, pane, started);
   }
 
   private async waitForNativeSession(herdr: HerdrClient, pane: { paneId: string }, started: AgentInfo): Promise<AgentInfo> {
-    if (started.agentSession) return started;
+    // Herdr's initial agent.start acknowledgement commonly reports launch_pending. Do not treat a
+    // future transcript path alone as readiness: wait until agent.get confirms that the same pane
+    // is an interactive named agent before ACP can issue its first semantic prompt.
+    if (started.agentSession && started.agent && started.interactiveReady && !started.launchPending) return started;
     const deadline = Date.now() + NATIVE_SESSION_DISCOVERY_TIMEOUT_MS;
     while (Date.now() < deadline) {
       await new Promise((resolve) => setTimeout(resolve, NATIVE_SESSION_DISCOVERY_POLL_MS));
       const current = await herdr.getAgent(pane.paneId);
-      if (current.agentSession) return current;
+      if (current.agentSession && current.agent && current.interactiveReady && !current.launchPending) return current;
     }
-    throw new Error("Native agent session discovery timed out");
+    throw new Error("Native agent interactive readiness timed out");
   }
+
 }

@@ -1,3 +1,4 @@
+import { HerdrRpcError } from "../wire.ts";
 import { parsePiTranscript, piUserMessageIdForText, readSafePiTranscript } from "./pi-transcript.ts";
 import { parseClaudeTranscript, claudeUserMessageIdForText, readSafeClaudeTranscript } from "./claude-transcript.ts";
 import { LiveAcpSessionRegistry } from "./session-registry.ts";
@@ -5,11 +6,35 @@ import { MAX_IMAGE_UPLOAD_BYTES, savePrivateImageUpload } from "../uploads.ts";
 
 const PROMPT_CONFIRM_TIMEOUT_MS = 8_000;
 const PROMPT_CONFIRM_POLL_MS = 150;
+const AGENT_READY_TIMEOUT_MS = 10_000;
+const AGENT_READY_RETRY_MS = 250;
 
 export interface AcpPromptInput {
   sessionId: string;
   text: string;
   images?: Array<{ mimeType: string; bytes: Uint8Array }>;
+}
+
+/** Only retry Herdr's definitive no-delivery readiness rejection; never retry an ambiguous write. */
+export async function promptWhenAgentReady(
+  sender: { promptAgent(paneId: string, text: string): Promise<unknown> },
+  paneId: string,
+  text: string,
+  sleep: (ms: number) => Promise<void> = async (ms) => await new Promise((resolve) => setTimeout(resolve, ms)),
+): Promise<void> {
+  const deadline = Date.now() + AGENT_READY_TIMEOUT_MS;
+  for (;;) {
+    try {
+      await sender.promptAgent(paneId, text);
+      return;
+    } catch (error) {
+      // `agent_not_ready` is a structured Herdr rejection before terminal delivery. It is safe to
+      // retry the identical semantic prompt after a bounded delay; every other error may be
+      // transport-ambiguous or post-delivery and must propagate exactly once.
+      if (!(error instanceof HerdrRpcError) || error.code !== "agent_not_ready" || Date.now() >= deadline) throw error;
+      await sleep(AGENT_READY_RETRY_MS);
+    }
+  }
 }
 
 /**
@@ -43,7 +68,13 @@ export class PiAcpPromptSender {
     if (!native || native.kind !== "path") {
       throw new Error("This session does not support safe ACP prompt delivery");
     }
-    if (native.agent === "pi") return await this.deliverPi(binding, input, native.value);
+    if (native.agent === "pi") {
+      const result = await this.deliverPi(binding, input, native.value);
+      // The proof loop above has just read a safe, real Pi transcript. Only now is this logical
+      // session eligible for durable closed-pane recovery.
+      this.sessions.persistBinding(input.sessionId);
+      return result;
+    }
     if (native.agent === "claude") return await this.deliverClaude(binding, input, native.value);
     throw new Error("This session does not support safe ACP prompt delivery");
   }
@@ -54,14 +85,27 @@ export class PiAcpPromptSender {
       imagePaths.push(await savePrivateImageUpload({ stateDir: this.stateDir, paneId: binding.agent.paneId, mimeType: image.mimeType, bytes: image.bytes }));
     }
     const nativeText = [input.text, ...imagePaths.map((imagePath) => `@${imagePath}`)].filter(Boolean).join("\n\n");
-    const before = await readSafePiTranscript(path);
-    const existingIds = new Set(parsePiTranscript(before).filter((entry) => entry.message?.role === "user" && typeof entry.id === "string").map((entry) => entry.id!));
-    await binding.runtime.herdr.promptAgent(binding.agent.paneId, nativeText);
+    // Pi may report its future transcript path before its first turn creates the JSONL. A missing
+    // pre-prompt transcript is therefore an empty baseline, not a delivery failure. We still require
+    // the post-prompt safe transcript proof before acknowledging or persisting this session.
+    let existingIds = new Set<string>();
+    try {
+      existingIds = new Set(parsePiTranscript(await readSafePiTranscript(path))
+        .filter((entry) => entry.message?.role === "user" && typeof entry.id === "string")
+        .map((entry) => entry.id!));
+    } catch {
+      // First-turn transcript creation is expected here; the proof loop below remains mandatory.
+    }
+    await promptWhenAgentReady(binding.runtime.herdr, binding.agent.paneId, nativeText);
     const deadline = Date.now() + PROMPT_CONFIRM_TIMEOUT_MS;
     while (Date.now() < deadline) {
       await new Promise((resolve) => setTimeout(resolve, PROMPT_CONFIRM_POLL_MS));
-      const entryId = piUserMessageIdForText(parsePiTranscript(await readSafePiTranscript(path)), nativeText, existingIds);
-      if (entryId) return { messageId: `pi:user:${entryId}` };
+      try {
+        const entryId = piUserMessageIdForText(parsePiTranscript(await readSafePiTranscript(path)), nativeText, existingIds);
+        if (entryId) return { messageId: `pi:user:${entryId}` };
+      } catch {
+        // Pi has not created its transcript yet; keep waiting within the bounded proof window.
+      }
     }
     throw new Error("Prompt delivery could not be confirmed from the native Pi transcript");
   }
@@ -76,7 +120,7 @@ export class PiAcpPromptSender {
     const nativeText = [input.text, ...imagePaths.map((imagePath) => `Analyze the image at: ${imagePath}`)].filter(Boolean).join("\n\n");
     const before = await readSafeClaudeTranscript(path);
     const existing = new Set(parseClaudeTranscript(before).filter((entry) => entry.message?.role === "user" && typeof entry.uuid === "string").map((entry) => entry.uuid!));
-    await binding.runtime.herdr.promptAgent(binding.agent.paneId, nativeText);
+    await promptWhenAgentReady(binding.runtime.herdr, binding.agent.paneId, nativeText);
     const deadline = Date.now() + PROMPT_CONFIRM_TIMEOUT_MS;
     while (Date.now() < deadline) {
       await new Promise((resolve) => setTimeout(resolve, PROMPT_CONFIRM_POLL_MS));

@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.0.13] - 2026-11-04
+
+### Fixed
+
+- Wait for Herdr to confirm an interactive named agent before ACP’s first semantic prompt, avoiding the `agent_not_ready` creation race.
+- Boundly retry only Herdr’s definitive pre-delivery `agent_not_ready` prompt rejection; ambiguous prompt failures remain non-retried.
+
+### Validated
+
+- Live-tested Pi ACP lifecycle: create → proof-confirmed prompt → close pane → `session/list` resumable → `session/resume` into a new pane under the same opaque ACP ID.
+
 ## [1.0.12] - 2026-11-04
 
 ### Added

@@ -71,6 +71,8 @@ describe("LiveAcpSessionRegistry", () => {
       const runtime = { name: "default", engine: { current: () => ({ bridge: "connected" as const, agents }) } };
       const registry = new LiveAcpSessionRegistry({ all: () => [runtime], get: () => runtime } as never, new AcpBindingStore(directory));
       const id = registry.list()[0]!.id;
+      // Pi becomes durable only after the proof-confirmed prompt path asks the registry to persist it.
+      registry.persistBinding(id);
       agents = [];
       expect(registry.find(id)).toMatchObject({ id, nativeStatus: "done", resumable: true, cwd: agent.cwd });
       expect(new AcpBindingStore(directory).get(id)).toMatchObject({ agent: "pi", transcriptPath: agent.nativeSession.value });

@@ -29,7 +29,8 @@ export class LiveAcpSessionRegistry implements AcpSessionProvider {
   remember(runtime: SessionRuntime, agent: AgentView): AcpSessionDescriptor {
     const descriptor = this.fromAgent(runtime.name, agent);
     this.provisioned.set(descriptor.id, { runtime, agent, descriptor, expiresAt: Date.now() + 30_000 });
-    this.persist(descriptor.id, runtime, agent);
+    // Pi creates its JSONL only after its first turn. Persist it after the transcript has become
+    // a real validated file (during prompt/replay), not from this early Herdr hint.
     return descriptor;
   }
 
@@ -42,10 +43,9 @@ export class LiveAcpSessionRegistry implements AcpSessionProvider {
       if (snapshot.bridge !== "connected") continue;
       for (const agent of snapshot.agents) {
         const live = this.fromAgent(runtime.name, agent);
-        // Persist any discoverable Pi (or transcript-bound Claude) conversation so a client that
-        // first connects through session/list receives the same durable resume behavior as one
-        // created through session/new.
-        this.persist(live.id, runtime, agent);
+        // Persist a Pi binding only once its transcript is a real file; Claude becomes durable when
+        // its validated hook supplies a transcript path. This avoids treating Herdr's early Pi
+        // planned-path hint as a recoverable native conversation.
         // A restored durable binding retains the logical ID even when the live snapshot exposes
         // Claude's native ID while replay/prompting needs its private transcript path.
         const adopted = [...this.provisioned.values()].find((pending) =>
@@ -69,6 +69,12 @@ export class LiveAcpSessionRegistry implements AcpSessionProvider {
   durable(id: string): PersistedAcpBinding | undefined {
     const binding = this.bindingStore?.get(id);
     return binding?.workspaceId && binding.cwd ? binding : undefined;
+  }
+
+  /** Persist a live binding only after its transcript adapter has proven the file is safe/readable. */
+  persistBinding(id: string): void {
+    const binding = this.binding(id);
+    if (binding) this.persist(id, binding.runtime, binding.agent);
   }
 
   /** Bind a hook-reported Claude transcript, retaining its original native-ID resume handle. */
@@ -148,7 +154,11 @@ export class LiveAcpSessionRegistry implements AcpSessionProvider {
       const snapshot = runtime?.engine.current();
       if (!snapshot || snapshot.bridge !== "connected") continue;
       const live = snapshot.agents.find((agent) => agent.paneId === pending.agent.paneId);
-      if (live || (pending.expiresAt !== undefined && now < pending.expiresAt)) continue;
+      if (live) continue;
+      // A durable record means this pane was positively bound already. Once its authoritative
+      // snapshot entry disappears, expose the closed logical session immediately; the short grace
+      // window is only for a freshly-created, not-yet-persisted pane to appear in StateEngine.
+      if (!this.bindingStore?.get(id) && pending.expiresAt !== undefined && now < pending.expiresAt) continue;
       // Forget only the ephemeral/live attachment. The durable logical conversation stays resumable.
       this.provisioned.delete(id);
     }

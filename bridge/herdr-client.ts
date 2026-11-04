@@ -253,7 +253,7 @@ export class HerdrClient {
   ) {}
 
   /** One request, one reply, one connection. Rejects on error reply, timeout, or early close. */
-  private request<T>(method: string, params: Record<string, unknown> = {}): Promise<T> {
+  private request<T>(method: string, params: Record<string, unknown> = {}, timeoutMs = this.timeoutMs): Promise<T> {
     const id = `b${++idCounter}`;
     return new Promise<T>((resolve, reject) => {
       let buf = "";
@@ -294,9 +294,9 @@ export class HerdrClient {
       };
       const timer = setTimeout(
         () => finish(() => reject(transportError(
-          new Error(`herdr ${method}: timed out after ${this.timeoutMs}ms`),
+          new Error(`herdr ${method}: timed out after ${timeoutMs}ms`),
         ))),
-        this.timeoutMs,
+        timeoutMs,
       );
 
       Bun.connect({
@@ -568,13 +568,16 @@ export class HerdrClient {
     args?: string[];
     timeoutMs?: number;
   }): Promise<AgentInfo> {
+    // Herdr defaults agent.start to a 30s interactive-readiness wait. The socket RPC transport's
+    // normal 5s deadline must not preempt that authoritative readiness contract.
+    const timeoutMs = input.timeoutMs ?? 30_000;
     const result = await this.request<{ type: "agent_started"; agent: WireAgentInfo }>("agent.start", {
       pane_id: input.paneId,
       kind: input.kind,
       name: input.name,
       ...(input.args?.length ? { args: input.args } : {}),
-      ...(input.timeoutMs !== undefined ? { timeout_ms: input.timeoutMs } : {}),
-    });
+      timeout_ms: timeoutMs,
+    }, timeoutMs + 2_000);
     return agentInfo(result.agent);
   }
 

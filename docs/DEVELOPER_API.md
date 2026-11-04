@@ -187,7 +187,7 @@ Key requirements:
 - Reconnects initialize again, then resume known opaque `herdr_…` session IDs.
 - ACP session IDs deliberately do not disclose Herdr pane IDs, native agent IDs, transcript paths, or relay upload paths.
 
-Read **[ACP_API.md](ACP_API.md)** before building an ACP client. It defines initialization, capabilities, session lifecycle, prompt image limits, cancellation semantics, replay, interaction behavior, and recovery expectations.
+Read **[ACP_API.md](ACP_API.md)** before building an ACP client. It defines initialization, capabilities, session lifecycle, prompt image limits, cancellation semantics, replay, interaction behavior, and recovery expectations. In particular, preserve the opaque `sessionId` returned by `session/new`/`session/list`: `session/resume` can reconnect a live pane or, for a write-authorized caller, recreate a missing Pi/Claude pane against the same validated native conversation. A missing native conversation is an error; the relay never silently creates a fresh one under an existing ACP ID.
 
 ## Development and validation
 

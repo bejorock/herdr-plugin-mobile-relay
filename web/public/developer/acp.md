@@ -118,6 +118,16 @@ With `replayFrom: {"type":"start"}`:
 
 The relay starts a transcript tailer after resume. New durable transcript records appear as complete ACP updates. Pi hooks may additionally deliver lower-latency best-effort chunks.
 
+### Durable logical resume
+
+The opaque ACP session ID identifies the native conversation rather than a disposable terminal pane. The relay retains a private, owner-only recovery handle after an agent pane exits. A later `session/resume` with the same ID and exact `cwd` behaves as follows:
+
+- if the Herdr pane is still live, it reconnects/replays as usual;
+- if the pane is gone but the stored Pi/Claude transcript and native conversation reference remain valid, a **write-authorized** ACP client causes the relay to make a replacement Herdr pane, start the same native conversation using relay-derived resume arguments, bind the original ACP ID to that new pane, then replay/tail it;
+- if the native conversation no longer exists or the relay cannot prove that the native agent resumed it, the request returns an error. The relay never starts a fresh conversation under a previously issued ACP ID.
+
+Closed-but-recoverable sessions remain in `session/list` with `_meta["herdr.dev"].resumable: true`. Pane IDs, native IDs, transcript paths, and resume arguments remain private and are never returned to the ACP client.
+
 ### `session/new`
 
 Creates a Herdr-backed agent session. The client must explicitly name an agent in `herdr.dev` metadata:

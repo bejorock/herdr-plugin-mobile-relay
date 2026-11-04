@@ -369,7 +369,7 @@ See the built-in **Developer API Reference** at `http://127.0.0.1:8787/developer
 | **Pi** | Session replay/tailing, proof-confirmed text and image prompts, cancellation, best-effort state/tool/text/thought updates, and explicit extension event-bus notifications/approvals/forms. |
 | **Claude Code** | Session replay/tailing, proof-confirmed text prompts, native permission decisions, `AskUserQuestion` single/multi-select, `ExitPlanMode` approval, best-effort assistant/tool/idle semantic updates, and safe terminal-local fallback when no remote client can answer. Private-path image prompting is implemented but awaits its final live smoke test after Claude quota renewal. |
 
-The relay creates opaque `herdr_…` ACP session IDs. ACP responses never disclose Herdr pane IDs, native session IDs, or host transcript/upload paths.
+The relay creates opaque `herdr_…` ACP session IDs. ACP responses never disclose Herdr pane IDs, native session IDs, or host transcript/upload paths. Save that opaque ID in the ACP client: the existing `session/resume` reconnects a live conversation, or—when its old pane exited—uses a write-authorized request to recreate Pi/Claude against the same stored native conversation. If the native conversation has been removed, it returns an error rather than silently creating a new conversation under the old ID.
 
 ### Enable local agent hooks explicitly
 

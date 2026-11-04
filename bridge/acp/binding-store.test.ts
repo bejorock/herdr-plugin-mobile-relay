@@ -12,6 +12,8 @@ const binding = {
   id: "herdr_12345678901234567890123456789012",
   herdrSession: "default",
   paneId: "w1:p1",
+  workspaceId: "w1",
+  cwd: "/home/u/project",
   agent: "claude" as const,
   nativeSource: "herdr:claude",
   nativeKind: "id" as const,
@@ -27,6 +29,16 @@ describe("AcpBindingStore", () => {
     store.upsert(binding);
     expect(new AcpBindingStore(directory).values()).toEqual([binding]);
     expect((await stat(store.path)).mode & 0o777).toBe(0o600);
+  });
+
+  test("retains legacy v1 Claude bindings for live rebinding but marks them unrecoverable by absent workspace data", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "herdr-acp-bindings-"));
+    directories.push(directory);
+    const legacy = { ...binding };
+    delete (legacy as { workspaceId?: string }).workspaceId;
+    delete (legacy as { cwd?: string }).cwd;
+    await writeFile(join(directory, "acp-bindings.json"), JSON.stringify({ version: 1, bindings: [legacy] }));
+    expect(new AcpBindingStore(directory).values()).toEqual([legacy]);
   });
 
   test("fails closed on malformed persisted data", async () => {

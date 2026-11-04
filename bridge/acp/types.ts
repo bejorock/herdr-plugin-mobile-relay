@@ -13,6 +13,8 @@ export interface AcpSessionDescriptor {
   paneId: string;
   nativeStatus: AgentStatus;
   hasNativeSession: boolean;
+  /** True only when the logical conversation is durable but its Herdr pane is no longer live. */
+  resumable?: boolean;
   /** Backend-only native reference. Never serialize this to an ACP client. */
   nativeSession?: {
     source: string;
@@ -25,6 +27,8 @@ export interface AcpSessionDescriptor {
 export interface AcpSessionProvider {
   list(): AcpSessionDescriptor[];
   find(id: string): AcpSessionDescriptor | undefined;
+  /** Private owner-only recovery record, exposed only to the relay's recovery implementation. */
+  durable?(id: string): unknown;
 }
 
 export interface AcpSocket {

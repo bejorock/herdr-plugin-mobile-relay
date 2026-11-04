@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { HerdrAcpProvisioner, parseHerdrNewSessionMeta } from "./provision.ts";
+import { HerdrAcpProvisioner, nativeResumeArgs, parseHerdrNewSessionMeta } from "./provision.ts";
 
 function runtime(input: { workspaces: unknown[]; agents?: unknown[]; shellPanes?: unknown[] }) {
   const calls: Array<{ method: string; args: unknown }> = [];
@@ -39,6 +39,13 @@ function runtime(input: { workspaces: unknown[]; agents?: unknown[]; shellPanes?
     },
   };
 }
+
+describe("nativeResumeArgs", () => {
+  test("uses only the persisted native handle, never client-provided resume arguments", () => {
+    expect(nativeResumeArgs({ agent: "pi", nativeValue: "ignored", transcriptPath: "/home/u/.pi/agent/sessions/session.jsonl" })).toEqual(["--session", "/home/u/.pi/agent/sessions/session.jsonl"]);
+    expect(nativeResumeArgs({ agent: "claude", nativeValue: "native-claude-id", transcriptPath: "/home/u/.claude/projects/p/transcript.jsonl" })).toEqual(["--resume", "native-claude-id"]);
+  });
+});
 
 describe("HerdrAcpProvisioner", () => {
   test("requires an explicit supported agent in herdr.dev metadata", () => {

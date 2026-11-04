@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.0.12] - 2026-11-04
+
+### Added
+
+- Make opaque ACP session IDs durable logical conversation identities: `session/resume` can safely recreate a closed Pi or Claude pane against its validated stored native conversation, then replay/tail it under the original ID.
+- Keep closed-but-recoverable sessions visible in ACP `session/list` with `herdr.dev.resumable: true`.
+
+### Safety
+
+- Session recovery requires ACP write authorization, serializes concurrent recovery requests, validates owner-only persisted transcript/native handles, and fails instead of silently creating a fresh conversation when the native conversation cannot be proven.
+
 ## [1.0.11] - 2026-10-28
 
 ### Added

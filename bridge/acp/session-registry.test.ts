@@ -7,7 +7,7 @@ import { AcpBindingStore } from "./binding-store.ts";
 import { acpSessionIdFor, LiveAcpSessionRegistry } from "./session-registry.ts";
 
 const agent = {
-  paneId: "w1:p1", workspaceLabel: "relay", cwd: "/opt/workspaces/relay", agent: "pi", status: "idle" as const,
+  paneId: "w1:p1", workspaceId: "w1", workspaceLabel: "relay", workspaceNumber: 1, tabId: "w1:t1", cwd: "/opt/workspaces/relay", agent: "pi", status: "idle" as const,
   nativeSession: { source: "herdr:pi", agent: "pi", kind: "path" as const, value: "/home/user/.pi/agent/sessions/one.jsonl" },
 };
 
@@ -55,8 +55,25 @@ describe("LiveAcpSessionRegistry", () => {
       expect(restored.find(id)).toMatchObject({ nativeSession: { kind: "path", value: "/home/u/.claude/projects/test/restored.jsonl" } });
 
       const stale = new LiveAcpSessionRegistry(sessions([{ ...claude, nativeSession: { ...claude.nativeSession, value: "different-id" } }]) as never, new AcpBindingStore(directory));
-      expect(stale.find(id)).toBeUndefined();
-      expect(new AcpBindingStore(directory).values()).toEqual([]);
+      // A vanished/mismatched pane no longer destroys the logical session. It remains resumable,
+      // but cannot be treated as a live transcript binding until recovery recreates it.
+      expect(stale.find(id)).toMatchObject({ id, nativeStatus: "done" });
+      expect(new AcpBindingStore(directory).values()).toHaveLength(1);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  test("keeps a Pi logical session resumable after its live pane disappears", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "herdr-acp-registry-"));
+    try {
+      let agents: unknown[] = [agent];
+      const runtime = { name: "default", engine: { current: () => ({ bridge: "connected" as const, agents }) } };
+      const registry = new LiveAcpSessionRegistry({ all: () => [runtime], get: () => runtime } as never, new AcpBindingStore(directory));
+      const id = registry.list()[0]!.id;
+      agents = [];
+      expect(registry.find(id)).toMatchObject({ id, nativeStatus: "done", resumable: true, cwd: agent.cwd });
+      expect(new AcpBindingStore(directory).get(id)).toMatchObject({ agent: "pi", transcriptPath: agent.nativeSession.value });
     } finally {
       await rm(directory, { recursive: true, force: true });
     }

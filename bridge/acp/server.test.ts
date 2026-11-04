@@ -388,6 +388,42 @@ describe("AcpWebSocketServer", () => {
     ]);
   });
 
+  test("recovers a durable closed session through session/resume without changing its ACP ID", async () => {
+    const closed = { ...piSession, nativeStatus: "done" as const, resumable: true };
+    const recovered = { ...piSession, nativeStatus: "idle" as const, paneId: "w1:p9", nativeSession: undefined };
+    const provider: AcpSessionProvider & { durable(id: string): unknown } = {
+      list: () => [closed], find: (id) => id === closed.id ? closed : undefined,
+      durable: (id) => id === closed.id ? { id } : undefined,
+    };
+    const provisioner = { recover: async (binding: { id: string }) => {
+      expect(binding).toEqual({ id: closed.id });
+      return recovered;
+    } } as unknown as ConstructorParameters<typeof AcpWebSocketServer>[2];
+    const server = new AcpWebSocketServer(provider, "0.1.0-test", provisioner);
+    const socket = open(server);
+    await initialize(server, socket);
+    await request(server, socket, 2, "session/resume", { sessionId: closed.id, cwd: closed.cwd });
+    expect(socket.sent.slice(1)).toEqual([
+      { jsonrpc: "2.0", method: "session/update", params: { sessionId: closed.id, update: { sessionUpdate: "state_update", state: "idle" } } },
+      { jsonrpc: "2.0", id: 2, result: {} },
+    ]);
+  });
+
+  test("does not allow a read-only ACP client to relaunch a durable closed session", async () => {
+    const closed = { ...piSession, nativeStatus: "done" as const, resumable: true };
+    let recoveryAttempts = 0;
+    const provider: AcpSessionProvider & { durable(id: string): unknown } = {
+      list: () => [closed], find: () => closed, durable: () => ({ id: closed.id }),
+    };
+    const provisioner = { recover: async () => { recoveryAttempts++; return piSession; } } as unknown as ConstructorParameters<typeof AcpWebSocketServer>[2];
+    const server = new AcpWebSocketServer(provider, "0.1.0-test", provisioner);
+    const socket = open(server, false);
+    await initialize(server, socket);
+    await request(server, socket, 2, "session/resume", { sessionId: closed.id, cwd: closed.cwd });
+    expect(recoveryAttempts).toBe(0);
+    expect(socket.sent.at(-1)).toEqual({ jsonrpc: "2.0", id: 2, error: { code: -32000, message: "Session recovery requires write access" } });
+  });
+
   test("rejects a mismatched cwd and an unsupported replay cursor", async () => {
     const server = makeServer();
     const socket = open(server);

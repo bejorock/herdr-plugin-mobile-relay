@@ -122,6 +122,8 @@ export class AcpWebSocketServer {
   private readonly connections = new Set<Connection>();
   private readonly interactions = new AcpInteractionBroker();
 
+  private readonly recovery = new Map<string, Promise<ReturnType<AcpSessionProvider["find"]>>>();
+
   constructor(
     private readonly sessions: AcpSessionProvider,
     private readonly version: string,
@@ -464,6 +466,7 @@ export class AcpWebSocketServer {
               agent: session.agent,
               nativeStatus: session.nativeStatus,
               nativeSessionBound: session.hasNativeSession,
+              ...(session.resumable ? { resumable: true } : {}),
             },
           },
         }));
@@ -476,7 +479,7 @@ export class AcpWebSocketServer {
           this.error(connection.socket, request.id, -32602, "sessionId and cwd are required");
           return;
         }
-        const session = this.sessions.find(params.sessionId);
+        let session = this.sessions.find(params.sessionId);
         if (!session) {
           this.error(connection.socket, request.id, -32000, "Session not found");
           return;
@@ -484,6 +487,22 @@ export class AcpWebSocketServer {
         if (params.cwd !== session.cwd) {
           this.error(connection.socket, request.id, -32602, "cwd does not match the session");
           return;
+        }
+        if (session.resumable) {
+          if (!connection.auth.canWrite) {
+            this.error(connection.socket, request.id, -32000, "Session recovery requires write access");
+            return;
+          }
+          try {
+            session = await this.recoverSession(session.id) ?? session;
+          } catch (error) {
+            this.error(connection.socket, request.id, -32000, error instanceof Error ? error.message : "Could not resume the stored native conversation");
+            return;
+          }
+          if (session.resumable) {
+            this.error(connection.socket, request.id, -32000, "Could not resume the stored native conversation");
+            return;
+          }
         }
         const replayFrom = params.replayFrom;
         if (replayFrom !== undefined && replayFrom !== null && (!isRecord(replayFrom) || replayFrom.type !== "start")) {
@@ -528,6 +547,18 @@ export class AcpWebSocketServer {
       // ACP cancellation is a notification: there is no response channel. The following
       // authoritative Herdr state update remains the only claim that cancellation completed.
     }
+  }
+
+  private async recoverSession(id: string): Promise<ReturnType<AcpSessionProvider["find"]>> {
+    const current = this.recovery.get(id);
+    if (current) return await current;
+    const operation = (async () => {
+      const durable = this.sessions.durable?.(id);
+      if (!durable || !this.provisioner) throw new Error("Stored native conversation is no longer available");
+      return await this.provisioner.recover(durable as Parameters<HerdrAcpProvisioner["recover"]>[0]);
+    })();
+    this.recovery.set(id, operation);
+    try { return await operation; } finally { this.recovery.delete(id); }
   }
 
   private async startTail(

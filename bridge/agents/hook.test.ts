@@ -184,6 +184,18 @@ describe("Agent hook protocol", () => {
     }
   }, 10_000);
 
+  test("does not steal or unlink an active relay's socket", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "herdr-hook-owner-"));
+    const first = new AgentHookServer(dir, registry() as never, { publish: () => {} });
+    const second = new AgentHookServer(dir, registry() as never, { publish: () => {} });
+    try {
+      await first.start();
+      await expect(second.start()).rejects.toThrow("already owned");
+      await second.stop();
+      expect((await (await import("node:fs/promises")).stat(first.path)).isSocket()).toBe(true);
+    } finally { await first.stop(); await rm(dir, { recursive: true, force: true }); }
+  });
+
   test("creates an owner-only socket and removes it on stop", async () => {
     const dir = await mkdtemp(join(tmpdir(), "herdr-hook-"));
     const server = new AgentHookServer(dir, registry() as never, { publish: () => {} });

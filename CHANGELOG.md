@@ -1,5 +1,18 @@
 # Changelog
 
+## [2.0.3] - 2026-11-07
+
+### Added
+
+- HTTP pending question/permission reads and validated response delivery, with scoped SSE request/resolution/expiry/cancellation events and exact native callback ownership.
+- Minimal Pi inter-extension forwarding and Claude native PermissionRequest/AskUserQuestion/plan adapters; explicit settings-backed installer with backups and targeted legacy migration.
+- Active hook socket ownership protection, connection shutdown cleanup and stale native-request sweeps. No ACP or transcript-inferred approvals.
+
+### Validation and limits
+
+- Live real-Pi two-request parent-forwarding callbacks and real-Claude question answer/permission denial through HTTP; isolated relay and test-owned panes, no personal settings changes or production restart.
+- Separate child-process forwarding, universal extension UI interception, native plan approval and permission allow execution remain unvalidated; discovery executable verification and folder APIs are still pending.
+
 ## [2.0.2] - 2026-11-07
 
 ### Added

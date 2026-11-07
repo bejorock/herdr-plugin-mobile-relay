@@ -13,7 +13,7 @@ There is **no bundled application/PWA, browser Web Push, notification preference
 
 HTTP harness discovery and native conversation create/read/resume are implemented; see [HTTP lifecycle contract](docs/HTTP_LIFECYCLE.md) for schemas, errors and limitations. These lifecycle paths have automated mocked-Herdr coverage and [live Pi/Claude HTTP validation](docs/HTTP_LIFECYCLE_LIVE_VALIDATION.md), including native context recall after recovery. Fault-injected launch failures remain mocked-test coverage only. Discovery reports `unknown` where Herdr only proves an installed hook, not executable availability.
 
-HTTP native transcript history/following and selected Herdr events are implemented; see [HTTP streams](docs/HTTP_STREAMS.md). Native tool content is client-rendered. Terminal frames, transcript records and Herdr events have distinct purposes. Interaction request/response endpoints and the active hook listener are **not implemented yet**. Durable restoration is HTTP-only; ACP is removed.
+HTTP native transcript history/following and selected Herdr events are implemented; see [HTTP streams](docs/HTTP_STREAMS.md). Native tool content is client-rendered. Terminal frames, transcript records and Herdr events have distinct purposes. Pending interaction reads, request/resolution events, HTTP responses and the native hook listener are implemented; see [HTTP interactions](docs/HTTP_INTERACTIONS.md). Adapters are explicitly installed—not silently added to agent settings. Durable restoration is HTTP-only; ACP is removed.
 
 ## Checkpoint and branches
 
@@ -53,15 +53,16 @@ The service reads `.env` strictly as data, never shell code. Herdr's `HERDR_SOCK
 herdr plugin link /absolute/path/to/herdr-plugin-mobile-relay
 ```
 
-Build directly with `bash scripts/relay-ctl.sh build`. Available plugin actions include `start`, `stop`, `restart`, `status`, `url`, `version`, `update`, and `uninstall`. Linux uses a systemd user service; macOS uses launchd. No frontend build or hook installation runs.
+Build directly with `bash scripts/relay-ctl.sh build`. Available plugin actions include `start`, `stop`, `restart`, `status`, `url`, `version`, `update`, and `uninstall`. Linux uses a systemd user service; macOS uses launchd. No frontend build or automatic hook installation runs.
 
-Old agent settings may still reference the previous `scripts/acp-hooks.ts`. This branch does not silently edit Pi/Claude configuration. Before deploying it, remove only the obsolete relay-owned hook/extension entries, preserving unrelated configuration. Use the archived installer source as a reference or its `hooks-uninstall` command from the archived checkout; back up agent settings first. Do not delete Herdr's own integrations.
+Install/migrate native adapters explicitly using `bun run scripts/agent-integrations.ts install` (or `status`/`uninstall`). Set `HERDR_PLUGIN_STATE_DIR` to the **running relay's state directory** when installing outside a Herdr plugin action; the generated wrappers must point at that relay's socket. The installer backs up settings, preserves unrelated/Herdr-owned hooks, and removes only recognized old relay-owned settings. Restart/reload Pi after installation. Do not run migration against the old production relay until deploying the lean build; its old response protocol differs. See the interaction guide for scope and limitations.
 
 ## API and security
 
 - [HTTP OpenAPI](docs/openapi.json)
 - [HTTP lifecycle contract and limitations](docs/HTTP_LIFECYCLE.md)
 - [HTTP transcript and Herdr SSE contract](docs/HTTP_STREAMS.md)
+- [HTTP interactions, native adapter installation and live evidence](docs/HTTP_INTERACTIONS.md)
 - [Terminal WebSocket reference](docs/DEVELOPER_API.md)
 - [Architecture and remaining work](docs/ARCHITECTURE.md)
 - [Revamp direction and implementation assessment](docs/LEAN_RELAY_REVAMP.md) — agreed scope, adapter changes, phases and acceptance; not yet implemented API contracts.

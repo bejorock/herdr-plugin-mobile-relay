@@ -43,6 +43,7 @@ export class InteractionBroker {
     entry.resolve(outcome);
     return true;
   }
+  cancel(id: string, reason = "cancelled"): boolean { return this.finish(id, { outcome: "cancelled", reason }); }
   close(): void {
     for (const id of this.pending.keys()) this.finish(id, { outcome: "cancelled", reason: "connection_closed" });
   }

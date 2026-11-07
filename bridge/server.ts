@@ -3,6 +3,8 @@ import { join } from "node:path";
 import type { AuditLog } from "./audit.ts";
 import { ConversationService, ConversationStore, LifecycleError, REQUEST_ID } from "./agents/conversations.ts";
 import { TranscriptService } from "./agents/transcripts.ts";
+import { InteractionService } from "./agents/interaction-service.ts";
+import { AgentHookServer } from "./agents/hook.ts";
 import { HerdrEventHub, HttpStreams } from "./http-events.ts";
 import { isLoopbackBindHost, MAX_READ_LINES, type Config } from "./config.ts";
 import { HerdrRequestError, type HerdrClient, type PaneRead } from "./herdr-client.ts";
@@ -74,6 +76,12 @@ const MAX_TERMINAL_COLS = 400;
 const MIN_TERMINAL_ROWS = 5;
 const MAX_TERMINAL_ROWS = 200;
 
+const hookServers = new WeakMap<object, { hooks: AgentHookServer; interactions: InteractionService; sweep: ReturnType<typeof setInterval> }>();
+export async function closeAgentHooks(server: object): Promise<void> {
+  const services = hookServers.get(server); hookServers.delete(server);
+  if (services) clearInterval(services.sweep);
+  services?.interactions.close(); await services?.hooks.stop();
+}
 const streamServers = new WeakMap<object, HttpStreams>();
 export function closeHttpStreams(server: object): void { streamServers.get(server)?.close(); streamServers.delete(server); }
 
@@ -293,6 +301,8 @@ export function startServer(opts: {
   conversations?: ConversationService;
   transcripts?: TranscriptService;
   herdrEvents?: HerdrEventHub;
+  interactions?: InteractionService;
+  enableHooks?: boolean;
 }) {
   const { cfg, registry, audit, liveUpdates } = opts;
   // Tests may inject a service; production uses its owner-only journal.
@@ -302,6 +312,8 @@ export function startServer(opts: {
   const history = () => transcripts ??= new TranscriptService(lifecycle());
   const streams = new HttpStreams();
   const herdrEvents = opts.herdrEvents ?? new HerdrEventHub();
+  let interactions = opts.interactions;
+  const requests = () => interactions ??= new InteractionService(lifecycle(), herdrEvents);
   const replyDeduplicator = new ReplyDeduplicator();
   const createDeduplicator = new CreateDeduplicator();
   const worktreeCreateDeduplicator = new WorktreeCreateDeduplicator();
@@ -338,6 +350,25 @@ export function startServer(opts: {
       const sessionName = url.searchParams.get("session") ?? undefined;
       const unknownSession = () =>
         jsonError(`unknown session: ${sessionName ?? ""}`, 404, req.headers.get("accept-encoding"));
+
+      const responseMatch = pathname.match(/^\/api\/interactions\/([^/]+)\/response$/);
+      if (pathname === "/api/interactions" || responseMatch) {
+        const denied = guard(req, cfg, responseMatch ? "write" : "read");
+        if (denied) return denied;
+        if (req.method !== (responseMatch ? "POST" : "GET")) return text("method not allowed", 405);
+        try {
+          if (!responseMatch) return json(requests().list(sessionName, url.searchParams.get("conversationId") ?? undefined), req.headers.get("accept-encoding"));
+          let body: unknown;
+          try { body = await req.json(); } catch { throw new LifecycleError(400, "invalid_request", "Expected a JSON object"); }
+          if (!isJsonObject(body) || !Object.hasOwn(body, "response") || Object.keys(body).length !== 1) throw new LifecycleError(400, "invalid_request", "Only response is accepted");
+          const result = await requests().respond(responseMatch[1]!, body.response, sessionName);
+          audit.record({ action: "interaction.respond", session: sessionName, device: deviceAuth(req, cfg).device, detail: { interactionId: responseMatch[1], outcome: "delivered" } });
+          return json(result, req.headers.get("accept-encoding"));
+        } catch (error) {
+          const failure = error instanceof LifecycleError ? error : new LifecycleError(500, "internal_error", "Interaction operation failed");
+          return secure(new Response(JSON.stringify({ error: { code: failure.code, message: failure.message } }), { status: failure.status, headers: { "content-type": "application/json; charset=utf-8" } }));
+        }
+      }
 
       const transcriptMatch = pathname.match(/^\/api\/conversations\/([^/]+)\/transcript(\/stream)?$/);
       if (pathname === "/api/events" || transcriptMatch) {
@@ -894,6 +925,21 @@ export function startServer(opts: {
     );
   }
 
+  if (opts.enableHooks) {
+    const broker = requests();
+    const hooks = new AgentHookServer(cfg.stateDir, registry, {
+      publish(binding, event) { if (event.kind === "interaction.cancel") broker.cancelNative(binding, event.interactionId); },
+      interaction: (binding, event, resolve) => broker.request(binding, event, resolve),
+      closed: (binding) => broker.closeOwner(binding),
+    });
+    let sweeping = false;
+    const sweep = setInterval(() => {
+      if (sweeping) return;
+      sweeping = true; void broker.sweep().finally(() => { sweeping = false; });
+    }, 2000); sweep.unref();
+    hookServers.set(server, { hooks, interactions: broker, sweep });
+    void hooks.start().catch(() => console.error("[hooks] Native interaction socket unavailable; remote requests will not be serviced"));
+  }
   streamServers.set(server, streams);
   return server;
 }

@@ -1,5 +1,5 @@
 import { chmod, lstat, unlink } from "node:fs/promises";
-import { createServer, type Server, type Socket } from "node:net";
+import { createConnection, createServer, type Server, type Socket } from "node:net";
 import { join } from "node:path";
 
 import type { SessionRegistry } from "../sessions.ts";
@@ -54,6 +54,9 @@ export interface HookEvent {
         kind: "interaction.request";
         interactionId: string;
         interactionKind: "permission" | "elicitation";
+        toolCallId?: string;
+        parentToolCallId?: string;
+        executionId?: string;
         title: string;
         description?: string;
         options?: Array<{ optionId: string; name: string }>;
@@ -61,6 +64,7 @@ export interface HookEvent {
         timeoutMs?: number;
         plan?: { planId: string; content: string };
       }
+    | { kind: "interaction.cancel"; interactionId: string }
     | {
         kind: "custom.notification";
         namespace: string;
@@ -75,13 +79,17 @@ export interface HookBinding {
   herdrSession: string;
   paneId: string;
   transcriptPath?: string;
+  nativeSession: NativeSession;
+  ownerId?: string;
+  connected?: () => boolean;
 }
 
 export interface HookEventSink {
   /** Called only after the adapter binding exactly matches live Herdr native-session state. */
   bind?(binding: HookBinding): void;
   publish(binding: HookBinding, event: HookEvent["event"]): void;
-  interaction?(binding: HookBinding, event: Extract<HookEvent["event"], { kind: "interaction.request" }>, resolve: (outcome: unknown) => void): void;
+  interaction?(binding: HookBinding, event: Extract<HookEvent["event"], { kind: "interaction.request" }>, resolve: (outcome: unknown) => void): void | Promise<void>;
+  closed?(binding: HookBinding): void;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -116,6 +124,9 @@ export function parseHookEvent(value: unknown): HookEvent | null {
     ) return null;
     return value as unknown as HookEvent;
   }
+  if (value.event.kind === "interaction.cancel") {
+    return typeof value.event.interactionId === "string" && /^[A-Za-z0-9._:-]{1,128}$/.test(value.event.interactionId) ? value as unknown as HookEvent : null;
+  }
   if (value.event.kind === "interaction.request") {
     if (
       typeof value.event.interactionId !== "string" || !/^[A-Za-z0-9._:-]{1,128}$/.test(value.event.interactionId) ||
@@ -123,6 +134,7 @@ export function parseHookEvent(value: unknown): HookEvent | null {
       typeof value.event.title !== "string" || value.event.title.length === 0 || value.event.title.length > 512 ||
       (value.event.description !== undefined && (typeof value.event.description !== "string" || value.event.description.length > 2048)) ||
       (value.event.options !== undefined && (!Array.isArray(value.event.options) || value.event.options.length > 16 || !value.event.options.every((option) => isRecord(option) && typeof option.optionId === "string" && /^[A-Za-z0-9._:-]{1,128}$/.test(option.optionId) && typeof option.name === "string" && option.name.length > 0 && option.name.length <= 128))) ||
+      [value.event.toolCallId, value.event.parentToolCallId, value.event.executionId].some((id) => id !== undefined && (typeof id !== "string" || !/^[A-Za-z0-9._:/-]{1,256}$/.test(id))) ||
       !isValidElicitationSchema(value.event.schema) ||
       (value.event.timeoutMs !== undefined && (typeof value.event.timeoutMs !== "number" || !Number.isSafeInteger(value.event.timeoutMs) || value.event.timeoutMs < 1_000 || value.event.timeoutMs > 300_000)) ||
       (value.event.plan !== undefined && (!isRecord(value.event.plan) || typeof value.event.plan.planId !== "string" || !/^[A-Za-z0-9._:-]{1,128}$/.test(value.event.plan.planId) || typeof value.event.plan.content !== "string" || value.event.plan.content.length === 0 || value.event.plan.content.length > 48_000))
@@ -184,6 +196,7 @@ export function resolveHookHello(registry: SessionRegistry, value: unknown): Hoo
       nativeValue: native.value,
     }),
     agent: pane.agent,
+    nativeSession: native,
     herdrSession: runtime.name,
     paneId: pane.paneId,
     ...(typeof value.binding.transcriptPath === "string" ? { transcriptPath: value.binding.transcriptPath } : {}),
@@ -193,6 +206,8 @@ export function resolveHookHello(registry: SessionRegistry, value: unknown): Hoo
 /** Owner-only newline JSON hook listener. Hooks are best-effort clients: a bad hook is disconnected. */
 export class AgentHookServer {
   private server: Server | null = null;
+  private readonly sockets = new Set<Socket>();
+  private startOperation?: Promise<void>;
   private readonly socketPath: string;
 
   constructor(
@@ -207,10 +222,24 @@ export class AgentHookServer {
     return this.socketPath;
   }
 
-  async start(): Promise<void> {
+  start(): Promise<void> {
+    return this.startOperation ??= this.listen();
+  }
+
+  private async listen(): Promise<void> {
     try {
       const existing = await lstat(this.socketPath);
       if (!existing.isSocket()) throw new Error(`refusing to replace non-socket hook path: ${this.socketPath}`);
+      const active = await new Promise<boolean>((resolve, reject) => {
+        const probe = createConnection(this.socketPath);
+        const timer = setTimeout(() => { probe.destroy(); reject(new Error("Hook socket probe timed out")); }, 1000);
+        probe.once("connect", () => { clearTimeout(timer); probe.destroy(); resolve(true); });
+        probe.once("error", (error: NodeJS.ErrnoException) => {
+          clearTimeout(timer); probe.destroy();
+          if (error.code === "ECONNREFUSED" || error.code === "ENOENT") resolve(false); else reject(error);
+        });
+      });
+      if (active) throw new Error("Native hook socket is already owned by a running relay");
       await unlink(this.socketPath);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
@@ -228,9 +257,13 @@ export class AgentHookServer {
   }
 
   async stop(): Promise<void> {
+    await this.startOperation?.catch(() => {});
+    this.startOperation = undefined;
     const server = this.server;
     this.server = null;
-    if (server) await new Promise<void>((resolve) => server.close(() => resolve()));
+    for (const socket of this.sockets) socket.destroy();
+    if (!server) return;
+    await new Promise<void>((resolve) => server.close(() => resolve()));
     try {
       const existing = await lstat(this.socketPath);
       if (existing.isSocket()) await unlink(this.socketPath);
@@ -240,10 +273,13 @@ export class AgentHookServer {
   }
 
   private accept(socket: Socket): void {
+    if (this.sockets.size >= 128) { socket.destroy(); return; }
+    this.sockets.add(socket);
     let buffer = "";
     let binding: HookBinding | null = null;
     let highestSequence = -1;
     const eventIds = new Set<string>();
+    socket.on("close", () => { this.sockets.delete(socket); if (binding) this.sink.closed?.(binding); });
     const close = () => socket.destroy();
     socket.setTimeout(5_000, close);
     socket.on("error", () => {});
@@ -264,6 +300,8 @@ export class AgentHookServer {
         if (!binding) {
           binding = resolveHookHello(this.registry, value);
           if (!binding) return close();
+          binding.ownerId = crypto.randomUUID();
+          binding.connected = () => !socket.destroyed;
           this.sink.bind?.(binding);
           // The short timeout is only a handshake deadline. A verified hook is a deliberately
           // persistent local connection, so it must not be killed merely for being idle.
@@ -275,11 +313,12 @@ export class AgentHookServer {
         if (!event || event.sequence <= highestSequence || eventIds.has(event.eventId)) return close();
         highestSequence = event.sequence;
         eventIds.add(event.eventId);
+        if (eventIds.size > 1024) eventIds.delete(eventIds.values().next().value!);
         if (event.event.kind === "interaction.request") {
           const interaction = event.event;
-          this.sink.interaction?.(binding, interaction, (outcome) => {
-            socket.write(`${JSON.stringify({ version: 1, type: "command", command: { kind: "interaction.resolve", interactionId: interaction.interactionId, outcome } })}\n`);
-          });
+          void Promise.resolve(this.sink.interaction?.(binding, interaction, (outcome) => {
+            if (!socket.destroyed) socket.write(`${JSON.stringify({ version: 1, type: "command", command: { kind: "interaction.resolve", interactionId: interaction.interactionId, outcome } })}\n`);
+          })).catch(() => socket.destroy());
         } else {
           this.sink.publish(binding, event.event);
         }

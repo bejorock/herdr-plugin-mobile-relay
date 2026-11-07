@@ -77,6 +77,7 @@ export class HerdrEventHub {
     runtime.ring.push(entry); if (runtime.ring.length > 256) runtime.ring.shift();
     for (const listener of runtime.listeners) listener(entry);
   }
+  interaction(session: string, event: string, data: unknown): void { this.publish(session, event, data); }
   event(session: string, event: string, data: unknown): void { this.publish(session, "herdr.event", { session, event, data: safeData(data) }); }
   health(session: string, live: boolean): void {
     this.runtime(session).healthy = live;

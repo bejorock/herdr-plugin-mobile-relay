@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Herdr Mobile Relay REST API",
-    "version": "2.0.2",
+    "version": "2.0.3",
     "description": "Lean Herdr HTTP API and optional terminal WebSocket. No bundled UI, browser push, or ACP endpoint."
   },
   "servers": [
@@ -27,6 +27,10 @@
     {
       "name": "Conversations",
       "description": "HTTP native conversation lifecycle; no transcript or interaction endpoints yet."
+    },
+    {
+      "name": "Interactions",
+      "description": "Actual live waits from integrated hooks/extensions, not inferred transcript actions."
     }
   ],
   "paths": {
@@ -1455,7 +1459,7 @@
           "State"
         ],
         "summary": "Observe selected Herdr runtime events using HTTP SSE",
-        "description": "See docs/HTTP_STREAMS.md for source projection, bounded cursors/queues and resynchronization. No model activity or automatic restoration.",
+        "description": "See docs/HTTP_STREAMS.md for source projection, bounded cursors/queues and resynchronization. No model activity or automatic restoration. Also carries interaction.requested/resolved/expired/cancelled; query /api/interactions for current pending state.",
         "parameters": [
           {
             "name": "session",
@@ -1558,6 +1562,258 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/api/interactions": {
+      "get": {
+        "tags": [
+          "Interactions"
+        ],
+        "summary": "List current native questions and permissions",
+        "description": "Read-only, no launch/prompt. Recover current requests after SSE reconnect. See HTTP_INTERACTIONS.md.",
+        "parameters": [
+          {
+            "name": "session",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "conversationId",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Pending requests",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PendingInteractions"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Structured interaction/lifecycle error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Structured interaction/lifecycle error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Structured interaction/lifecycle error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Structured interaction/lifecycle error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Structured interaction/lifecycle error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Existing access gate denied (plain text)"
+          }
+        }
+      }
+    },
+    "/api/interactions/{interactionId}/response": {
+      "post": {
+        "tags": [
+          "Interactions"
+        ],
+        "summary": "Deliver one validated answer to the original native requester",
+        "description": "Write authorization and fresh native identity required. Success is callback delivery, not completed execution. No answers in events/audit.",
+        "parameters": [
+          {
+            "name": "session",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "interactionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "response"
+                ],
+                "properties": {
+                  "response": {
+                    "oneOf": [
+                      {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "optionId"
+                        ],
+                        "properties": {
+                          "optionId": {
+                            "type": "string"
+                          }
+                        }
+                      },
+                      {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "action",
+                          "content"
+                        ],
+                        "properties": {
+                          "action": {
+                            "const": "accept"
+                          },
+                          "content": {
+                            "type": "object"
+                          }
+                        }
+                      },
+                      {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "action"
+                        ],
+                        "properties": {
+                          "action": {
+                            "enum": [
+                              "decline",
+                              "cancel"
+                            ]
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Callback delivered",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Structured interaction/lifecycle error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Structured interaction/lifecycle error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Structured interaction/lifecycle error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Structured interaction/lifecycle error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Structured interaction/lifecycle error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Existing access gate denied (plain text)"
           }
         }
       }
@@ -2310,6 +2566,110 @@
           },
           "hasMore": {
             "type": "boolean"
+          }
+        }
+      },
+      "Interaction": {
+        "type": "object",
+        "required": [
+          "id",
+          "conversationId",
+          "session",
+          "agent",
+          "kind",
+          "title",
+          "expiresAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "conversationId": {
+            "type": "string"
+          },
+          "session": {
+            "type": "string"
+          },
+          "agent": {
+            "enum": [
+              "pi",
+              "claude"
+            ]
+          },
+          "kind": {
+            "enum": [
+              "permission",
+              "elicitation"
+            ]
+          },
+          "title": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "expiresAt": {
+            "type": "integer"
+          },
+          "options": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "optionId",
+                "name"
+              ],
+              "properties": {
+                "optionId": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "schema": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "plan": {
+            "type": "object",
+            "properties": {
+              "planId": {
+                "type": "string"
+              },
+              "content": {
+                "type": "string"
+              }
+            }
+          },
+          "toolCallId": {
+            "type": "string"
+          },
+          "parentToolCallId": {
+            "type": "string"
+          },
+          "executionId": {
+            "type": "string"
+          }
+        }
+      },
+      "PendingInteractions": {
+        "type": "object",
+        "required": [
+          "session",
+          "interactions"
+        ],
+        "properties": {
+          "session": {
+            "type": "string"
+          },
+          "interactions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Interaction"
+            }
           }
         }
       }

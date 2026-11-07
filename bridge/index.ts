@@ -7,7 +7,7 @@ import { HerdrClient } from "./herdr-client.ts";
 import { HerdrEventHub } from "./http-events.ts";
 import { LiveUpdateHub } from "./live-updates.ts";
 import { ensurePrivateDirectory } from "./private-fs.ts";
-import { closeHttpStreams, startServer } from "./server.ts";
+import { closeAgentHooks, closeHttpStreams, startServer } from "./server.ts";
 import { deriveConfigRoot, SessionRegistry, type SessionFactory } from "./sessions.ts";
 import { StateEngine } from "./state-engine.ts";
 import { SWEEP_INTERVAL_MS, sweepUploads } from "./uploads.ts";
@@ -54,7 +54,7 @@ const uploadsDir = join(cfg.stateDir, "uploads");
 void sweepUploads(uploadsDir);
 const sweepTimer = setInterval(() => void sweepUploads(uploadsDir), SWEEP_INTERVAL_MS);
 sweepTimer.unref();
-const server = startServer({ cfg, registry, audit, liveUpdates, herdrEvents, version });
+const server = startServer({ cfg, registry, audit, liveUpdates, herdrEvents, version, enableHooks: true });
 let stopping = false;
 async function shutdown() {
   if (stopping) return;
@@ -64,6 +64,7 @@ async function shutdown() {
   liveUpdates.closeAll();
   // Terminal observers belong to sockets and are closed by websocket.close.
   closeHttpStreams(server);
+  await closeAgentHooks(server);
   await server.stop(true);
   await registry.disposeAll();
   await audit.flush();

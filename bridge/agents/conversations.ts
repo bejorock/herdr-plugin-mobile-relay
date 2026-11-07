@@ -61,6 +61,10 @@ export class ConversationStore {
     } catch { throw new LifecycleError(500, "persistence_failed", "Conversation store is invalid; operator intervention required"); }
   }
   get(id: string): Record | undefined { const r = this.records.get(id); return r ? structuredClone(r) : undefined; }
+  byNative(session: string, agent: string, native: Native): Record | undefined {
+    const record = [...this.records.values()].find((r) => r.session === session && r.kind === agent && r.native?.source === native.source && r.native.kind === native.kind && r.native.value === native.value);
+    return record ? structuredClone(record) : undefined;
+  }
   byRequest(session: string, requestId: string): Record | undefined {
     const r = [...this.records.values()].find((r) => r.session === session && r.requestId === requestId);
     return r ? structuredClone(r) : undefined;
@@ -176,6 +180,33 @@ export class ConversationService {
       record.phase = "allocating"; record.launchPaneId = undefined; this.store.save(record);
       return this.launch(runtime, record, true);
     }, true);
+  }
+  /** Bind a verified live hook to a durable conversation, without launching or prompting. */
+  async attachNative(session: string, paneId: string, kind: string, native: Native): Promise<Conversation> {
+    if (kind !== "pi" && kind !== "claude") throw new LifecycleError(400, "invalid_request", "Unsupported native harness");
+    const runtime = this.runtime(session);
+    let agent: AgentInfo;
+    try { agent = await runtime.herdr.getAgent(paneId); }
+    catch { throw new LifecycleError(409, "interaction_stale", "Native requester is no longer live"); }
+    const actual = agent.agentSession;
+    if (agent.agent !== kind || !actual || actual.agent !== kind || actual.source !== native.source || actual.kind !== native.kind || actual.value !== native.value) {
+      throw new LifecycleError(409, "interaction_stale", "Native requester identity changed");
+    }
+    const cwd = await this.canonicalCwd(agent.cwd);
+    let record = this.store.byNative(session, kind, native);
+    if (record && record.cwd !== cwd) throw new LifecycleError(409, "interaction_stale", "Native requester cwd changed");
+    if (!record) record = { id: `conversation_${randomUUID()}`, session, kind, cwd, native, requestId: `hook:${randomUUID()}`, phase: "bound" };
+    return this.attach(record, agent);
+  }
+  async verifyNative(session: string, paneId: string, kind: string, native: Native): Promise<void> {
+    const runtime = this.runtime(session);
+    let agent: AgentInfo;
+    try { agent = await runtime.herdr.getAgent(paneId); }
+    catch { throw new LifecycleError(409, "interaction_stale", "Native requester is no longer live"); }
+    const actual = agent.agentSession;
+    if (agent.agent !== kind || !actual || actual.source !== native.source || actual.kind !== native.kind || actual.value !== native.value) {
+      throw new LifecycleError(409, "interaction_stale", "Native requester identity changed");
+    }
   }
   /** Private adapter access only; never serialize this native handle to HTTP clients. */
   transcriptBinding(id: string, session?: string): { id: string; kind: Kind; cwd: string; native: Native } {

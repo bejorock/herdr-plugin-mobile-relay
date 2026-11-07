@@ -14,7 +14,7 @@ Security includes Host/Origin validation, proxy identity policies, optional devi
 - Native transcripts contain conversation/tool records for client-owned native rendering.
 - Actionable requests represent real pending questions/permissions, including integrated extension/workflow requests that might never enter a transcript.
 
-Of these data channels, only the terminal channel is public currently. HTTP discovery and conversation create/read/resume are now implemented separately; see [HTTP lifecycle](HTTP_LIFECYCLE.md). Safe native adapter foundations under `bridge/agents/` do not yet instantiate a hook listener, publish agent events, install hooks, or expose transcript/response endpoints. There is no ACP negotiation or replacement general agent protocol.
+Terminal and transcript channels are public, along with selected Herdr event delivery; see [HTTP streams](HTTP_STREAMS.md). HTTP discovery and conversation create/read/resume are implemented separately; see [HTTP lifecycle](HTTP_LIFECYCLE.md). Native interaction foundations under `bridge/agents/` do not yet instantiate a hook listener, publish actionable agent events, install hooks, or expose interaction-response endpoints. There is no ACP negotiation or replacement general agent protocol.
 
 ## Retained agent foundations
 
@@ -30,6 +30,6 @@ The old hook binding identifier remains internal and pane-scoped. HTTP lifecycle
 
 See [Lean Relay Revamp](LEAN_RELAY_REVAMP.md) for the agreed boundaries, injected Pi/Claude integration changes, nested-request strategy, implementation increments and acceptance criteria. It separates transcript delivery from live actionable events and leaves rendering/correlation policy to clients.
 
-Next, specify a small HTTP contract for transcript reads and actionable events/responses. Clients own rendering and whether to associate an event with a transcript tool call. Adapters must forward actual pending requests and route replies to the originating callback, not infer approvals from historical tool names. Nested workflow/subagent support requires explicit parent forwarding or an authenticated native adapter; it is not automatic.
+The HTTP transcript and Herdr-event increment is implemented. Next, specify and implement actionable events/responses together with the injected integrations. Clients own rendering and whether to associate an event with a transcript tool call. Adapters must forward actual pending requests and route replies to the originating callback, not infer approvals from historical tool names. Nested workflow/subagent support requires explicit parent forwarding or an authenticated native adapter; it is not automatic.
 
 No PWA, browser push service, notification preferences/snooze, remote model probes, or ACP lifecycle dispatcher remains in the active process. Existing deployment/user data is not deleted during source cleanup.

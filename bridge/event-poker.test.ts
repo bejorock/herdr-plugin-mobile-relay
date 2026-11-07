@@ -97,6 +97,21 @@ describe("EventPoker — health", () => {
   });
 });
 
+describe("EventPoker — public event forwarding", () => {
+  test("preserves native event names/data and marks each upstream subscription boundary", () => {
+    const { client, poker } = makePoker();
+    const events: unknown[] = []; let resets = 0;
+    const off = poker.onEvent((event, data) => events.push({ event, data }));
+    poker.onResubscribe(() => resets++);
+    poker.start(); client.last.onUp();
+    client.last.onEvent("pane_created", { pane: { pane_id: "p1" } });
+    expect(events).toEqual([{ event: "pane_created", data: { pane: { pane_id: "p1" } } }]);
+    expect(resets).toBe(1);
+    off(); client.last.onEvent("pane_closed", {}); expect(events).toHaveLength(1);
+    poker.stop();
+  });
+});
+
 describe("EventPoker — debounced poke", () => {
   test("coalesces a burst of events into a single trailing poke", async () => {
     const { client, poker, pokes } = makePoker({ debounceMs: 10 });

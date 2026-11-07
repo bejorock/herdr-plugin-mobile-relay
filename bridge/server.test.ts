@@ -26,12 +26,15 @@ import {
   makePaneAnsiViewportAdaptive,
   sendReplySteps,
   startServer,
+  closeHttpStreams,
   workspaceRootSource,
   type ReplySender,
 } from "./server.ts";
 import type { Config } from "./config.ts";
 import { HerdrRequestError, type PaneRead } from "./herdr-client.ts";
 import { LifecycleError, type ConversationService } from "./agents/conversations.ts";
+import type { TranscriptService } from "./agents/transcripts.ts";
+import { HerdrEventHub } from "./http-events.ts";
 
 // checkAccess is the API security gate (same-origin/CSRF + optional Tailscale identity). A
 // regression here silently opens remote shell access, so it gets the most direct coverage.
@@ -198,6 +201,37 @@ describe("lean API surface", () => {
         }
       }
     } finally { await server.stop(true); }
+  });
+});
+
+describe("HTTP transcript and event routes", () => {
+  test("history and SSE share read gates, use scoped cursors and release connections", async () => {
+    const calls: unknown[] = [];
+    const page = { conversationId: "c1", kind: "pi", records: [{ id: "r1", role: "user", content: "hello" }], nextCursor: "opaque", hasMore: false };
+    const transcripts = { page: async (id: string, opts: unknown) => { calls.push({ id, opts }); return page; } } as unknown as TranscriptService;
+    const hub = new HerdrEventHub();
+    const server = startServer({ cfg: cfg({ port: 0 }), registry: {} as never, audit: {} as never, liveUpdates: {} as never,
+      conversations: { runtime: () => ({ name: "work" }) } as never, transcripts, herdrEvents: hub });
+    try {
+      const base = `http://127.0.0.1:${server.port}`;
+      const history = await fetch(`${base}/api/conversations/c1/transcript?session=work&limit=2&cursor=before`);
+      expect(history.status).toBe(200); expect(await history.json()).toEqual(page);
+      expect(calls[0]).toEqual({ id: "c1", opts: { session: "work", limit: 2, cursor: "before" } });
+      expect((await fetch(`${base}/api/conversations/c1/transcript?limit=bad`)).status).toBe(400);
+      const abort = new AbortController();
+      const response = await fetch(`${base}/api/conversations/c1/transcript/stream`, { headers: { "last-event-id": "previous" }, signal: abort.signal });
+      expect(response.headers.get("content-type")).toContain("text/event-stream");
+      const reader = response.body!.getReader(); const text = new TextDecoder().decode((await reader.read()).value);
+      expect(text).toContain("event: transcript.records"); expect(text).toContain("id: opaque");
+      expect(calls[1]).toEqual({ id: "c1", opts: { session: undefined, limit: 100, cursor: "previous" } });
+      abort.abort(); await reader.cancel().catch(() => {});
+      const eventsAbort = new AbortController(); const events = await fetch(`${base}/api/events?session=work`, { signal: eventsAbort.signal });
+      const eventReader = events.body!.getReader();
+      expect(new TextDecoder().decode((await eventReader.read()).value)).toContain("resync.required");
+      hub.event("work", "pane.created", { pane_id: "test-pane" });
+      expect(new TextDecoder().decode((await eventReader.read()).value)).toContain("test-pane");
+      eventsAbort.abort(); await eventReader.cancel().catch(() => {});
+    } finally { closeHttpStreams(server); await server.stop(true); }
   });
 });
 

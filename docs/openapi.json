@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Herdr Mobile Relay REST API",
-    "version": "2.0.1",
+    "version": "2.0.2",
     "description": "Lean Herdr HTTP API and optional terminal WebSocket. No bundled UI, browser push, or ACP endpoint."
   },
   "servers": [
@@ -1177,6 +1177,390 @@
           }
         }
       }
+    },
+    "/api/conversations/{conversationId}/transcript": {
+      "get": {
+        "tags": [
+          "Conversations"
+        ],
+        "summary": "Read native transcript history (client-rendered)",
+        "description": "See docs/HTTP_STREAMS.md for source projection, bounded cursors/queues and resynchronization. No model activity or automatic restoration.",
+        "parameters": [
+          {
+            "name": "session",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "conversationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "maxLength": 256
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 100
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TranscriptPage"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Existing access gate denies request"
+          },
+          "405": {
+            "description": "Method not allowed"
+          },
+          "400": {
+            "description": "Structured error before SSE headers; after headers stream.error and disconnect",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Structured error before SSE headers; after headers stream.error and disconnect",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Structured error before SSE headers; after headers stream.error and disconnect",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleError"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Structured error before SSE headers; after headers stream.error and disconnect",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Structured error before SSE headers; after headers stream.error and disconnect",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Structured error before SSE headers; after headers stream.error and disconnect",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Structured error before SSE headers; after headers stream.error and disconnect",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/conversations/{conversationId}/transcript/stream": {
+      "get": {
+        "tags": [
+          "Conversations"
+        ],
+        "summary": "Follow durable transcript records using HTTP SSE",
+        "description": "See docs/HTTP_STREAMS.md for source projection, bounded cursors/queues and resynchronization. No model activity or automatic restoration.",
+        "parameters": [
+          {
+            "name": "session",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "conversationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "maxLength": 256
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 100
+            }
+          },
+          {
+            "name": "Last-Event-ID",
+            "in": "header",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Existing access gate denies request"
+          },
+          "405": {
+            "description": "Method not allowed"
+          },
+          "400": {
+            "description": "Structured error before SSE headers; after headers stream.error and disconnect",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Structured error before SSE headers; after headers stream.error and disconnect",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Structured error before SSE headers; after headers stream.error and disconnect",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleError"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Structured error before SSE headers; after headers stream.error and disconnect",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Structured error before SSE headers; after headers stream.error and disconnect",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Structured error before SSE headers; after headers stream.error and disconnect",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Structured error before SSE headers; after headers stream.error and disconnect",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/events": {
+      "get": {
+        "tags": [
+          "State"
+        ],
+        "summary": "Observe selected Herdr runtime events using HTTP SSE",
+        "description": "See docs/HTTP_STREAMS.md for source projection, bounded cursors/queues and resynchronization. No model activity or automatic restoration.",
+        "parameters": [
+          {
+            "name": "session",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Last-Event-ID",
+            "in": "header",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Existing access gate denies request"
+          },
+          "405": {
+            "description": "Method not allowed"
+          },
+          "400": {
+            "description": "Structured error before SSE headers; after headers stream.error and disconnect",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Structured error before SSE headers; after headers stream.error and disconnect",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Structured error before SSE headers; after headers stream.error and disconnect",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleError"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Structured error before SSE headers; after headers stream.error and disconnect",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Structured error before SSE headers; after headers stream.error and disconnect",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Structured error before SSE headers; after headers stream.error and disconnect",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Structured error before SSE headers; after headers stream.error and disconnect",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -1859,6 +2243,73 @@
                 }
               }
             }
+          }
+        }
+      },
+      "TranscriptRecord": {
+        "type": "object",
+        "required": [
+          "id",
+          "type",
+          "role",
+          "content"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "type": {
+            "const": "message"
+          },
+          "role": {
+            "enum": [
+              "user",
+              "assistant",
+              "toolResult"
+            ]
+          },
+          "content": {},
+          "toolCallId": {
+            "type": "string"
+          },
+          "toolName": {
+            "type": "string"
+          },
+          "isError": {
+            "type": "boolean"
+          }
+        }
+      },
+      "TranscriptPage": {
+        "type": "object",
+        "required": [
+          "conversationId",
+          "kind",
+          "records",
+          "nextCursor",
+          "hasMore"
+        ],
+        "properties": {
+          "conversationId": {
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "pi",
+              "claude"
+            ]
+          },
+          "records": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TranscriptRecord"
+            }
+          },
+          "nextCursor": {
+            "type": "string"
+          },
+          "hasMore": {
+            "type": "boolean"
           }
         }
       }

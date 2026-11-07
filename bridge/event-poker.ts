@@ -77,6 +77,8 @@ export class EventPoker {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly pokeListeners = new Set<() => void>();
   private readonly healthListeners = new Set<(healthy: boolean) => void>();
+  private readonly eventListeners = new Set<(event: string, data: unknown) => void>();
+  private readonly resetListeners = new Set<() => void>();
 
   constructor(
     private readonly client: HerdrClient,
@@ -94,6 +96,16 @@ export class EventPoker {
   onHealth(cb: (healthy: boolean) => void): () => void {
     this.healthListeners.add(cb);
     return () => this.healthListeners.delete(cb);
+  }
+
+  onEvent(cb: (event: string, data: unknown) => void): () => void {
+    this.eventListeners.add(cb);
+    return () => this.eventListeners.delete(cb);
+  }
+
+  onResubscribe(cb: () => void): () => void {
+    this.resetListeners.add(cb);
+    return () => this.resetListeners.delete(cb);
   }
 
   start(): void {
@@ -136,9 +148,11 @@ export class EventPoker {
         // the only journal evidence that the per-pane subscriptions followed the herd. Log it.
         if (this.healthy) console.log(`[events] resubscribed (${subs.length} subscriptions)`);
         this.setHealthy(true, subs.length);
+        for (const listener of this.resetListeners) listener();
       },
       onEvent: (event, data) => {
         if (this.stream !== handle) return;
+        for (const listener of this.eventListeners) listener(event, data);
         this.schedulePoke();
       },
       onDown: (reason) => {

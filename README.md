@@ -13,7 +13,7 @@ There is **no bundled application/PWA, browser Web Push, notification preference
 
 HTTP harness discovery and native conversation create/read/resume are implemented; see [HTTP lifecycle contract](docs/HTTP_LIFECYCLE.md) for schemas, errors and limitations. These lifecycle paths have automated mocked-Herdr coverage and [live Pi/Claude HTTP validation](docs/HTTP_LIFECYCLE_LIVE_VALIDATION.md), including native context recall after recovery. Fault-injected launch failures remain mocked-test coverage only. Discovery reports `unknown` where Herdr only proves an installed hook, not executable availability.
 
-Native Pi/Claude transcript readers and hook/request-response foundations remain under `bridge/agents/`. Public transcript/event/interaction-response endpoints and the active hook listener are **not implemented yet**. Durable restoration is HTTP-only; ACP is removed.
+HTTP native transcript history/following and selected Herdr events are implemented; see [HTTP streams](docs/HTTP_STREAMS.md). Native tool content is client-rendered. Terminal frames, transcript records and Herdr events have distinct purposes. Interaction request/response endpoints and the active hook listener are **not implemented yet**. Durable restoration is HTTP-only; ACP is removed.
 
 ## Checkpoint and branches
 
@@ -61,13 +61,14 @@ Old agent settings may still reference the previous `scripts/acp-hooks.ts`. This
 
 - [HTTP OpenAPI](docs/openapi.json)
 - [HTTP lifecycle contract and limitations](docs/HTTP_LIFECYCLE.md)
+- [HTTP transcript and Herdr SSE contract](docs/HTTP_STREAMS.md)
 - [Terminal WebSocket reference](docs/DEVELOPER_API.md)
 - [Architecture and remaining work](docs/ARCHITECTURE.md)
 - [Revamp direction and implementation assessment](docs/LEAN_RELAY_REVAMP.md) — agreed scope, adapter changes, phases and acceptance; not yet implemented API contracts.
 
 Only loopback binding is permitted. Publish remotely using **Tailscale Serve, never Funnel**. Remote requests require an allowed public Host and valid proxy-injected Tailscale identity. Configure one trusted user, a trusted-user list, or explicit any-authenticated-tailnet-user mode; enforce network permission with Tailscale ACLs. Optional device policy restricts writes further. Native clients use `X-Herdr-Client: herdr-mobile-v1` for origin-less writes on an approved public Host. Browser writes require an approved Origin.
 
-Unknown or removed routes return 404; no SPA fallback exists. `/api/live` sends invalidation signals, not a durable/raw replay of every Herdr event. A future structured HTTP/event API is a separate design step.
+Unknown or removed routes return 404; no SPA fallback exists. `/api/live` retains terminal frames and invalidation signals. `/api/events` delivers a selected, privacy-projected Herdr event subset, not durable/raw replay of every Herdr event. Transcript SSE follows durable records, not token deltas.
 
 ## Attribution
 

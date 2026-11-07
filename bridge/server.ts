@@ -2,6 +2,8 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { AuditLog } from "./audit.ts";
 import { ConversationService, ConversationStore, LifecycleError, REQUEST_ID } from "./agents/conversations.ts";
+import { TranscriptService } from "./agents/transcripts.ts";
+import { HerdrEventHub, HttpStreams } from "./http-events.ts";
 import { isLoopbackBindHost, MAX_READ_LINES, type Config } from "./config.ts";
 import { HerdrRequestError, type HerdrClient, type PaneRead } from "./herdr-client.ts";
 import { computeEtag, gzipJsonResponse, notModified } from "./http-cache.ts";
@@ -71,6 +73,9 @@ const MIN_TERMINAL_COLS = 20;
 const MAX_TERMINAL_COLS = 400;
 const MIN_TERMINAL_ROWS = 5;
 const MAX_TERMINAL_ROWS = 200;
+
+const streamServers = new WeakMap<object, HttpStreams>();
+export function closeHttpStreams(server: object): void { streamServers.get(server)?.close(); streamServers.delete(server); }
 
 const PANE_ROUTE = /^\/api\/pane\/([^/]+)(?:\/(reply|input|submit|keys|upload|close))?$/;
 
@@ -286,11 +291,17 @@ export function startServer(opts: {
   /** Running relay version. */
   version?: string;
   conversations?: ConversationService;
+  transcripts?: TranscriptService;
+  herdrEvents?: HerdrEventHub;
 }) {
   const { cfg, registry, audit, liveUpdates } = opts;
   // Tests may inject a service; production uses its owner-only journal.
   let conversations = opts.conversations;
   const lifecycle = () => conversations ??= new ConversationService(registry, new ConversationStore(cfg.stateDir));
+  let transcripts = opts.transcripts;
+  const history = () => transcripts ??= new TranscriptService(lifecycle());
+  const streams = new HttpStreams();
+  const herdrEvents = opts.herdrEvents ?? new HerdrEventHub();
   const replyDeduplicator = new ReplyDeduplicator();
   const createDeduplicator = new CreateDeduplicator();
   const worktreeCreateDeduplicator = new WorktreeCreateDeduplicator();
@@ -311,6 +322,8 @@ export function startServer(opts: {
   const server = Bun.serve<LiveSocketData>({
     hostname: cfg.host,
     port: cfg.port,
+    // SSE heartbeat cadence is 15s; keep Bun's idle timeout longer than that.
+    idleTimeout: 30,
     // Runtime cap on any request body — a chunked/lying client is cut off here even if its
     // Content-Length is absent or false. The upload handler still does its own precise check.
     maxRequestBodySize: MAX_REQUEST_BODY_BYTES,
@@ -325,6 +338,55 @@ export function startServer(opts: {
       const sessionName = url.searchParams.get("session") ?? undefined;
       const unknownSession = () =>
         jsonError(`unknown session: ${sessionName ?? ""}`, 404, req.headers.get("accept-encoding"));
+
+      const transcriptMatch = pathname.match(/^\/api\/conversations\/([^/]+)\/transcript(\/stream)?$/);
+      if (pathname === "/api/events" || transcriptMatch) {
+        const denied = guard(req, cfg, "read");
+        if (denied) return denied;
+        if (req.method !== "GET") return text("method not allowed", 405);
+        try {
+          if (pathname === "/api/events") {
+            const runtime = lifecycle().runtime(sessionName);
+            return secure(streams.open(req, `events:${runtime.name}`, (writer) => herdrEvents.subscribe(runtime.name, writer, req.headers.get("last-event-id") ?? undefined)));
+          }
+          const id = transcriptMatch![1]!;
+          const follow = !!transcriptMatch![2];
+          const rawLimit = url.searchParams.get("limit");
+          if (rawLimit !== null && !/^\d{1,3}$/.test(rawLimit)) throw new LifecycleError(400, "invalid_request", "Invalid transcript limit");
+          const limit = rawLimit === null ? 100 : Number(rawLimit);
+          const suppliedCursor = url.searchParams.get("cursor") ?? (follow ? req.headers.get("last-event-id") : null) ?? undefined;
+          const first = await history().page(id, { session: sessionName, cursor: suppliedCursor, limit });
+          if (!follow) return json(first, req.headers.get("accept-encoding"));
+          return secure(streams.open(req, `transcript:${id}`, (writer) => {
+            let cursor = first.nextCursor;
+            let stopped = false;
+            let timer: ReturnType<typeof setTimeout> | undefined;
+            const send = (page: typeof first) => writer.send("transcript.records", page, page.nextCursor);
+            send(first);
+            const poll = async () => {
+              try {
+                const page = await history().page(id, { session: sessionName, cursor, limit });
+                if (stopped) return;
+                if (page.records.length && !send(page)) return;
+                cursor = page.nextCursor;
+                timer = setTimeout(() => void poll(), page.hasMore ? 0 : 1000); timer.unref();
+              } catch (error) {
+                if (stopped) return;
+                const failure = error instanceof LifecycleError ? error : new LifecycleError(500, "stream_failed", "Transcript stream failed");
+                writer.send(failure.code === "transcript_reset" ? "transcript.reset" : "stream.error", { code: failure.code, message: failure.message });
+                writer.close();
+              }
+            };
+            writer.onClose(() => { stopped = true; if (timer) clearTimeout(timer); });
+            if (!stopped) { timer = setTimeout(() => void poll(), first.hasMore ? 0 : 1000); timer.unref(); }
+          }));
+        } catch (error) {
+          const failure = error instanceof LifecycleError ? error : new LifecycleError(500, "internal_error", "Stream operation failed");
+          return secure(new Response(JSON.stringify({ error: { code: failure.code, message: failure.message } }), {
+            status: failure.status, headers: { "content-type": "application/json; charset=utf-8" },
+          }));
+        }
+      }
 
       const conversationMatch = pathname.match(/^\/api\/conversations\/([^/]+)(\/resume)?$/);
       if (pathname === "/api/agent-kinds" || pathname === "/api/conversations" || conversationMatch) {
@@ -832,6 +894,7 @@ export function startServer(opts: {
     );
   }
 
+  streamServers.set(server, streams);
   return server;
 }
 

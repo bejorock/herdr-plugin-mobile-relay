@@ -4,9 +4,10 @@ import { AuditLog, fileAuditAppender } from "./audit.ts";
 import { loadConfig } from "./config.ts";
 import { EventPoker } from "./event-poker.ts";
 import { HerdrClient } from "./herdr-client.ts";
+import { HerdrEventHub } from "./http-events.ts";
 import { LiveUpdateHub } from "./live-updates.ts";
 import { ensurePrivateDirectory } from "./private-fs.ts";
-import { startServer } from "./server.ts";
+import { closeHttpStreams, startServer } from "./server.ts";
 import { deriveConfigRoot, SessionRegistry, type SessionFactory } from "./sessions.ts";
 import { StateEngine } from "./state-engine.ts";
 import { SWEEP_INTERVAL_MS, sweepUploads } from "./uploads.ts";
@@ -15,6 +16,7 @@ const cfg = loadConfig();
 await ensurePrivateDirectory(cfg.stateDir);
 const audit = new AuditLog(fileAuditAppender(join(cfg.stateDir, "audit.log")));
 const liveUpdates = new LiveUpdateHub();
+const herdrEvents = new HerdrEventHub();
 const version = (JSON.parse(readFileSync(join(import.meta.dir, "..", "package.json"), "utf8")) as { version: string }).version;
 
 const makeSession: SessionFactory = (name, socketPath) => {
@@ -23,9 +25,12 @@ const makeSession: SessionFactory = (name, socketPath) => {
   // Herdr events invalidate the cache; authoritative snapshots remain the source of truth.
   const poker = new EventPoker(herdr);
   poker.onPoke(() => engine.pokeNow());
+  poker.onEvent((event, data) => herdrEvents.event(name, event, data));
+  poker.onResubscribe(() => herdrEvents.resync(name, "subscription_changed"));
   poker.onHealth((healthy) => {
     engine.setCadence(healthy ? cfg.pollIdleMs : cfg.pollMs);
     liveUpdates.setSourceHealthy(name, healthy);
+    herdrEvents.health(name, healthy);
   });
   engine.onUpdate((snapshot) => poker.setAgentPanes(snapshot.agents.map((agent) => agent.paneId)));
   engine.onUpdate(() => liveUpdates.snapshotChanged(name));
@@ -49,7 +54,7 @@ const uploadsDir = join(cfg.stateDir, "uploads");
 void sweepUploads(uploadsDir);
 const sweepTimer = setInterval(() => void sweepUploads(uploadsDir), SWEEP_INTERVAL_MS);
 sweepTimer.unref();
-const server = startServer({ cfg, registry, audit, liveUpdates, version });
+const server = startServer({ cfg, registry, audit, liveUpdates, herdrEvents, version });
 let stopping = false;
 async function shutdown() {
   if (stopping) return;
@@ -58,6 +63,7 @@ async function shutdown() {
   clearInterval(sweepTimer);
   liveUpdates.closeAll();
   // Terminal observers belong to sockets and are closed by websocket.close.
+  closeHttpStreams(server);
   await server.stop(true);
   await registry.disposeAll();
   await audit.flush();

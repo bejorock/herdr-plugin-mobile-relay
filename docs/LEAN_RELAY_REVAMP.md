@@ -8,7 +8,7 @@ This document supersedes the earlier ACP-centric direction. [Architecture](ARCHI
 
 ## Implementation tracking
 
-The first HTTP discovery/create/read/resume increment is implemented after the pruning baseline; [HTTP lifecycle](HTTP_LIFECYCLE.md) documents its exact behavior and remaining limitations. Ordinary Pi/Claude HTTP lifecycle and native context continuation are now [live-validated](HTTP_LIFECYCLE_LIVE_VALIDATION.md). Fault-injected native failures, attach-existing, reliable executable verification when hooks are installed, public transcripts/events/interactions and folders remain incomplete. The requirements below describe the complete target, not a claim those remaining features exist.
+The first HTTP discovery/create/read/resume increment is implemented after the pruning baseline; [HTTP lifecycle](HTTP_LIFECYCLE.md) documents its exact behavior and remaining limitations. Ordinary Pi/Claude HTTP lifecycle and native context continuation are now [live-validated](HTTP_LIFECYCLE_LIVE_VALIDATION.md). HTTP transcript history/following and selected Herdr events are implemented; see [HTTP streams](HTTP_STREAMS.md). Fault-injected native failures, attach-existing, reliable executable verification when hooks are installed, actionable native interactions and folders remain incomplete. The requirements below describe the complete target, not a claim those remaining features exist.
 
 ## 1. Goal and principles
 

@@ -1,5 +1,18 @@
 # Changelog
 
+## [2.0.2] - 2026-11-07
+
+### Added
+
+- HTTP native transcript history and bounded SSE following with conversation-scoped prefix cursors, partial-write handling, active Pi branch selection and native tool content.
+- HTTP SSE for selected real Herdr events, with safe field projection, bounded in-memory reconnect history and explicit snapshot resynchronization signals.
+- Stream queue/subscriber/lifetime limits and shutdown/abort cleanup; terminal WebSocket remains separate.
+
+### Validation and limitations
+
+- Read prior real Pi/Claude conversations over HTTP and resumed SSE at the tail without duplicate records; observed real Herdr `tab_created`/`pane_created` events from a disposable tab. No model calls in these streaming checks.
+- Initial transcript implementation uses bounded whole-file reads with a short cache, default storage roots and fixed file/record limits. Native interaction events/responses, updated integrations, attach-existing and folder APIs remain pending.
+
 ## [2.0.1] - 2026-11-07
 
 ### Added

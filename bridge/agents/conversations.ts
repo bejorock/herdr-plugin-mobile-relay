@@ -177,6 +177,12 @@ export class ConversationService {
       return this.launch(runtime, record, true);
     }, true);
   }
+  /** Private adapter access only; never serialize this native handle to HTTP clients. */
+  transcriptBinding(id: string, session?: string): { id: string; kind: Kind; cwd: string; native: Native } {
+    const record = this.record(id, session);
+    if (!record.native) throw new LifecycleError(409, "create_pending", "Native conversation identity is not established");
+    return { id: record.id, kind: record.kind, cwd: record.cwd, native: record.native };
+  }
   private record(id: string, session?: string): Record {
     const record = this.store.get(id);
     if (!record) throw new LifecycleError(404, "conversation_unknown", "Unknown conversation");

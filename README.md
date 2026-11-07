@@ -11,7 +11,9 @@ An authenticated, loopback-only HTTP relay for Herdr, with optional native termi
 
 There is **no bundled application/PWA, browser Web Push, notification preferences, release-alert service, or `/acp` endpoint**.
 
-Native Pi/Claude transcript readers, private session-binding storage and hook/request-response foundations are retained under `bridge/agents/`. They are internal, tested building blocks, **not wired to a public conversation API or active hook listener yet**. This pruning pass does not implement replacement transcript/event/response endpoints. Durable restoration through ACP is no longer available.
+HTTP harness discovery and native conversation create/read/resume are implemented; see [HTTP lifecycle contract](docs/HTTP_LIFECYCLE.md) for schemas, errors and limitations. These lifecycle paths have automated mocked-Herdr coverage, **not live native validation of this HTTP implementation yet**. Discovery reports `unknown` where Herdr only proves an installed hook, not executable availability.
+
+Native Pi/Claude transcript readers and hook/request-response foundations remain under `bridge/agents/`. Public transcript/event/interaction-response endpoints and the active hook listener are **not implemented yet**. Durable restoration is HTTP-only; ACP is removed.
 
 ## Checkpoint and branches
 
@@ -58,8 +60,10 @@ Old agent settings may still reference the previous `scripts/acp-hooks.ts`. This
 ## API and security
 
 - [HTTP OpenAPI](docs/openapi.json)
+- [HTTP lifecycle contract and limitations](docs/HTTP_LIFECYCLE.md)
 - [Terminal WebSocket reference](docs/DEVELOPER_API.md)
 - [Architecture and remaining work](docs/ARCHITECTURE.md)
+- [Revamp direction and implementation assessment](docs/LEAN_RELAY_REVAMP.md) — agreed scope, adapter changes, phases and acceptance; not yet implemented API contracts.
 
 Only loopback binding is permitted. Publish remotely using **Tailscale Serve, never Funnel**. Remote requests require an allowed public Host and valid proxy-injected Tailscale identity. Configure one trusted user, a trusted-user list, or explicit any-authenticated-tailnet-user mode; enforce network permission with Tailscale ACLs. Optional device policy restricts writes further. Native clients use `X-Herdr-Client: herdr-mobile-v1` for origin-less writes on an approved public Host. Browser writes require an approved Origin.
 

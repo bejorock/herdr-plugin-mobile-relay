@@ -1,5 +1,18 @@
 # Changelog
 
+## [2.0.1] - 2026-11-07
+
+### Added
+
+- HTTP-only Pi/Claude discovery and conversation create/read/resume with runtime/cwd validation, private native identity journal, durable request-ID deduplication and exact native restoration proof.
+- Journal unresolved launch allocations before mutation; retries never blindly launch another agent. Initial launches without saved native identity require explicit inspection rather than unsafe pane-only adoption.
+- Structured lifecycle errors and first-increment OpenAPI/contract documentation, plus the complete lean revamp direction.
+
+### Validation and limitations
+
+- Automated HTTP/security and mocked Herdr/native lifecycle tests; this HTTP implementation has not yet received live Pi/Claude acceptance validation.
+- Installed-hook evidence alone reports discovery as unknown. Public transcript/events/interactions, attach-existing and folder APIs remain pending.
+
 ## [2.0.0] - 2026-11-07
 
 ### Changed

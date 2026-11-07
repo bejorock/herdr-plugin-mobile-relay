@@ -31,6 +31,7 @@ import {
 } from "./server.ts";
 import type { Config } from "./config.ts";
 import { HerdrRequestError, type PaneRead } from "./herdr-client.ts";
+import { LifecycleError, type ConversationService } from "./agents/conversations.ts";
 
 // checkAccess is the API security gate (same-origin/CSRF + optional Tailscale identity). A
 // regression here silently opens remote shell access, so it gets the most direct coverage.
@@ -196,6 +197,48 @@ describe("lean API surface", () => {
           expect((await fetch(`${base}${path}`, { method })).status).toBe(404);
         }
       }
+    } finally { await server.stop(true); }
+  });
+});
+
+describe("HTTP conversation routes", () => {
+  test("uses HTTP lifecycle bodies, selected runtime, structured errors and no client native handles", async () => {
+    const calls: unknown[] = [];
+    const conversation = { id: "conversation-test", kind: "pi", session: "work", cwd: "/repo", paneId: "p1", status: "live" };
+    const service = {
+      discover: async (session: unknown) => { calls.push(session); return { session, agents: [] }; },
+      create: async (input: unknown) => { calls.push(input); return conversation; },
+      get: async (id: string, session: unknown) => { calls.push({ id, session }); if (id === "unknown") throw new LifecycleError(404, "conversation_unknown", "Unknown conversation"); return conversation; },
+      resume: async (...args: unknown[]) => { calls.push(args); return conversation; },
+    } as unknown as ConversationService;
+    const server = startServer({ cfg: cfg({ port: 0 }), registry: {} as never, audit: { record: () => {} } as never, liveUpdates: {} as never, conversations: service });
+    try {
+      const base = `http://127.0.0.1:${server.port}`;
+      expect((await fetch(`${base}/api/agent-kinds?session=work`)).status).toBe(200);
+      const post = (path: string, body: unknown) => fetch(base + path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+      const created = await post("/api/conversations?session=work", { kind: "pi", cwd: "/repo", requestId: "r1" });
+      expect(created.status).toBe(201); expect(await created.json()).toEqual({ conversation });
+      expect(calls[1]).toEqual({ kind: "pi", cwd: "/repo", requestId: "r1", session: "work" });
+      expect((await post("/api/conversations/conversation-test/resume?session=work", { cwd: "/repo" })).status).toBe(200);
+      expect(calls[2]).toEqual(["conversation-test", "/repo", "work"]);
+      expect((await post("/api/conversations", { kind: "pi", cwd: "/repo", requestId: "r1", nativeValue: "/secret" })).status).toBe(400);
+      const unknown = await fetch(`${base}/api/conversations/unknown`);
+      expect(unknown.status).toBe(404); expect(await unknown.json()).toEqual({ error: { code: "conversation_unknown", message: "Unknown conversation" } });
+      expect((await fetch(`${base}/api/conversations`, { method: "GET" })).status).toBe(405);
+    } finally { await server.stop(true); }
+  });
+  test("read-only devices cannot launch or restore and unauthorized requests do not touch services", async () => {
+    let calls = 0;
+    const service = { create: async () => { calls++; }, resume: async () => { calls++; } } as unknown as ConversationService;
+    const server = startServer({ cfg: cfg({ port: 0, publicHosts: ["relay.example.ts.net"], deviceHeader: "x-device", deviceAllowlist: ["owner"] }), registry: {} as never,
+      audit: {} as never, liveUpdates: {} as never, conversations: service });
+    try {
+      const base = `http://127.0.0.1:${server.port}`;
+      for (const path of ["/api/conversations", "/api/conversations/known/resume"]) {
+        const result = await fetch(base + path, { method: "POST", headers: { host: "relay.example.ts.net", "tailscale-user-login": "me@example.com", "x-device": "readonly", origin: "https://relay.example.ts.net" }, body: "{}" });
+        expect(result.status).toBe(403);
+      }
+      expect(calls).toBe(0);
     } finally { await server.stop(true); }
   });
 });

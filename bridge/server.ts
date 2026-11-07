@@ -1,6 +1,7 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { AuditLog } from "./audit.ts";
+import { ConversationService, ConversationStore, LifecycleError, REQUEST_ID } from "./agents/conversations.ts";
 import { isLoopbackBindHost, MAX_READ_LINES, type Config } from "./config.ts";
 import { HerdrRequestError, type HerdrClient, type PaneRead } from "./herdr-client.ts";
 import { computeEtag, gzipJsonResponse, notModified } from "./http-cache.ts";
@@ -284,8 +285,12 @@ export function startServer(opts: {
   liveUpdates: LiveUpdateHub;
   /** Running relay version. */
   version?: string;
+  conversations?: ConversationService;
 }) {
   const { cfg, registry, audit, liveUpdates } = opts;
+  // Tests may inject a service; production uses its owner-only journal.
+  let conversations = opts.conversations;
+  const lifecycle = () => conversations ??= new ConversationService(registry, new ConversationStore(cfg.stateDir));
   const replyDeduplicator = new ReplyDeduplicator();
   const createDeduplicator = new CreateDeduplicator();
   const worktreeCreateDeduplicator = new WorktreeCreateDeduplicator();
@@ -320,6 +325,43 @@ export function startServer(opts: {
       const sessionName = url.searchParams.get("session") ?? undefined;
       const unknownSession = () =>
         jsonError(`unknown session: ${sessionName ?? ""}`, 404, req.headers.get("accept-encoding"));
+
+      const conversationMatch = pathname.match(/^\/api\/conversations\/([^/]+)(\/resume)?$/);
+      if (pathname === "/api/agent-kinds" || pathname === "/api/conversations" || conversationMatch) {
+        const resume = !!conversationMatch?.[2];
+        const allowed = pathname === "/api/agent-kinds" ? req.method === "GET"
+          : pathname === "/api/conversations" || resume ? req.method === "POST" : req.method === "GET";
+        const denied = guard(req, cfg, req.method === "GET" ? "read" : "write");
+        if (denied) return denied;
+        if (!allowed) return text("method not allowed", 405);
+        try {
+          if (pathname === "/api/agent-kinds") return json(await lifecycle().discover(sessionName), req.headers.get("accept-encoding"));
+          const id = conversationMatch?.[1];
+          if (req.method === "GET" && id) return json({ conversation: await lifecycle().get(id, sessionName) }, req.headers.get("accept-encoding"));
+          let body: unknown;
+          try { body = await req.json(); } catch { throw new LifecycleError(400, "invalid_request", "Expected a JSON object"); }
+          if (!isJsonObject(body) || typeof body.cwd !== "string" ||
+              Object.keys(body).some((key) => !(resume ? ["cwd"] : ["kind", "cwd", "requestId"]).includes(key))) {
+            throw new LifecycleError(400, "invalid_request", "Invalid conversation request");
+          }
+          let conversation;
+          if (resume && id) conversation = await lifecycle().resume(id, body.cwd, sessionName);
+          else {
+            if ((body.kind !== "pi" && body.kind !== "claude") || typeof body.requestId !== "string" || !REQUEST_ID.test(body.requestId)) {
+              throw new LifecycleError(400, "invalid_request", "Explicit pi/claude kind and bounded requestId are required");
+            }
+            conversation = await lifecycle().create({ session: sessionName, cwd: body.cwd, kind: body.kind, requestId: body.requestId });
+          }
+          audit.record({ action: resume ? "conversation.resume" : "conversation.create", session: conversation.session, paneId: conversation.paneId ?? undefined,
+            device: deviceAuth(req, cfg).device, detail: { conversationId: conversation.id, kind: conversation.kind, outcome: "confirmed" } });
+          return secure(new Response(JSON.stringify({ conversation }), { status: resume ? 200 : 201, headers: { "content-type": "application/json; charset=utf-8" } }));
+        } catch (error) {
+          const failure = error instanceof LifecycleError ? error : new LifecycleError(500, "internal_error", "Conversation operation failed");
+          return secure(new Response(JSON.stringify({ error: { code: failure.code, message: failure.message } }), {
+            status: failure.status, headers: { "content-type": "application/json; charset=utf-8" },
+          }));
+        }
+      }
 
       if (pathname === "/api/live") {
         const gate = checkAccess(req, cfg);

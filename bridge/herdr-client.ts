@@ -554,6 +554,20 @@ export class HerdrClient {
     };
   }
 
+  /** Herdr integration metadata; availability may include installed-hook evidence. */
+  async listIntegrations(): Promise<Array<{ target: string; command: string; available: boolean; state: string }>> {
+    const result = await this.request<{ integrations: Array<{ target: string; command: string; available: boolean; state: string }> }>("integration.list");
+    return result.integrations;
+  }
+
+  /** Fresh native identity read, independent of the snapshot cache. */
+  async listAgentBindings(): Promise<Array<{ paneId: string; workspaceId: string; cwd: string; agent: string | null; nativeSession?: WireAgentSession }>> {
+    return (await this.listPanes()).map((pane) => ({
+      paneId: pane.pane_id, workspaceId: pane.workspace_id, cwd: normalizedPaneCwd(pane),
+      agent: pane.agent ?? null, ...(pane.agent_session ? { nativeSession: pane.agent_session } : {}),
+    }));
+  }
+
   /** Read one agent by pane/name target, including its native session binding when reported. */
   async getAgent(target: string): Promise<AgentInfo> {
     const result = await this.request<{ type: "agent_info"; agent: WireAgentInfo }>("agent.get", { target });

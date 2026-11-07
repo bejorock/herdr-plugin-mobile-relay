@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Herdr Mobile Relay REST API",
-    "version": "2.0.0",
+    "version": "2.0.1",
     "description": "Lean Herdr HTTP API and optional terminal WebSocket. No bundled UI, browser push, or ACP endpoint."
   },
   "servers": [
@@ -23,6 +23,10 @@
     {
       "name": "Workspace",
       "description": "Workspace, tab, worktree, file and Git operations."
+    },
+    {
+      "name": "Conversations",
+      "description": "HTTP native conversation lifecycle; no transcript or interaction endpoints yet."
     }
   ],
   "paths": {
@@ -724,6 +728,455 @@
           }
         }
       }
+    },
+    "/api/agent-kinds": {
+      "get": {
+        "tags": [
+          "Conversations"
+        ],
+        "summary": "Discover Pi and Claude using Herdr integration evidence",
+        "description": "See HTTP_LIFECYCLE.md for identity, failure, retention and interrupted-launch semantics. No ACP.",
+        "parameters": [
+          {
+            "name": "session",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Discovered Herdr runtime; absent selects primary for discovery/create, saved runtime for existing conversation."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentKinds"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Structured lifecycle failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Structured lifecycle failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Structured lifecycle failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Structured lifecycle failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Structured lifecycle failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Structured lifecycle failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Existing host/origin/device access gate denied request (plain text)."
+          }
+        }
+      }
+    },
+    "/api/conversations": {
+      "post": {
+        "tags": [
+          "Conversations"
+        ],
+        "summary": "Create and privately persist a native conversation",
+        "description": "See HTTP_LIFECYCLE.md for identity, failure, retention and interrupted-launch semantics. No ACP.",
+        "parameters": [
+          {
+            "name": "session",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Discovered Herdr runtime; absent selects primary for discovery/create, saved runtime for existing conversation."
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Structured lifecycle failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Structured lifecycle failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Structured lifecycle failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Structured lifecycle failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Structured lifecycle failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Structured lifecycle failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Existing host/origin/device access gate denied request (plain text)."
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "kind",
+                  "cwd",
+                  "requestId"
+                ],
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "pi",
+                      "claude"
+                    ]
+                  },
+                  "cwd": {
+                    "type": "string",
+                    "maxLength": 4096
+                  },
+                  "requestId": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9._:-]{1,128}$"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/conversations/{conversationId}": {
+      "get": {
+        "tags": [
+          "Conversations"
+        ],
+        "summary": "Read current attachment without launching",
+        "description": "See HTTP_LIFECYCLE.md for identity, failure, retention and interrupted-launch semantics. No ACP.",
+        "parameters": [
+          {
+            "name": "session",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Discovered Herdr runtime; absent selects primary for discovery/create, saved runtime for existing conversation."
+          },
+          {
+            "name": "conversationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Structured lifecycle failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Structured lifecycle failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Structured lifecycle failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Structured lifecycle failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Structured lifecycle failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Structured lifecycle failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Existing host/origin/device access gate denied request (plain text)."
+          }
+        }
+      }
+    },
+    "/api/conversations/{conversationId}/resume": {
+      "post": {
+        "tags": [
+          "Conversations"
+        ],
+        "summary": "Reconnect or restore the saved native conversation",
+        "description": "See HTTP_LIFECYCLE.md for identity, failure, retention and interrupted-launch semantics. No ACP.",
+        "parameters": [
+          {
+            "name": "session",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Discovered Herdr runtime; absent selects primary for discovery/create, saved runtime for existing conversation."
+          },
+          {
+            "name": "conversationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Structured lifecycle failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Structured lifecycle failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Structured lifecycle failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Structured lifecycle failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Structured lifecycle failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Structured lifecycle failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Existing host/origin/device access gate denied request (plain text)."
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "cwd"
+                ],
+                "properties": {
+                  "cwd": {
+                    "type": "string",
+                    "maxLength": 4096
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -1274,6 +1727,138 @@
           },
           "cwd": {
             "type": "string"
+          }
+        }
+      },
+      "LifecycleError": {
+        "type": "object",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "type": "object",
+            "required": [
+              "code",
+              "message"
+            ],
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      },
+      "Conversation": {
+        "type": "object",
+        "required": [
+          "id",
+          "session",
+          "kind",
+          "cwd",
+          "paneId",
+          "status"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^conversation_[0-9a-f-]{36}$"
+          },
+          "session": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "pi",
+              "claude"
+            ]
+          },
+          "cwd": {
+            "type": "string"
+          },
+          "paneId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "live",
+              "closed",
+              "unavailable",
+              "starting"
+            ]
+          }
+        }
+      },
+      "ConversationResult": {
+        "type": "object",
+        "required": [
+          "conversation"
+        ],
+        "properties": {
+          "conversation": {
+            "$ref": "#/components/schemas/Conversation"
+          }
+        }
+      },
+      "AgentKinds": {
+        "type": "object",
+        "required": [
+          "session",
+          "agents"
+        ],
+        "properties": {
+          "session": {
+            "type": "string"
+          },
+          "agents": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "kind",
+                "availability",
+                "version",
+                "reason"
+              ],
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "pi",
+                    "claude"
+                  ]
+                },
+                "availability": {
+                  "type": "string",
+                  "enum": [
+                    "available",
+                    "unavailable",
+                    "unknown"
+                  ]
+                },
+                "version": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "reason": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              }
+            }
           }
         }
       }

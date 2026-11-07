@@ -32,7 +32,7 @@ export interface AgentView {
   focused: boolean;
   /** "agent" for an agent-bearing pane, "shell" for a bare shell. Defaults to "agent" when absent. */
   kind?: "agent" | "shell";
-  /** Internal native-session binding used by ACP adapters; deliberately omitted from REST responses. */
+  /** Internal native-session binding used by native adapters; deliberately omitted from REST responses. */
   nativeSession?: NativeAgentSessionRef;
 }
 
@@ -75,7 +75,7 @@ export type BridgeStatus = "connected" | "disconnected";
  * single-session deployment reports exactly one (the primary), so nothing about the UI changes.
  */
 export interface SessionSummary {
-  /** Registry name, e.g. "default" or "collie-demo". Client passes this back as `?session=`. */
+  /** Registry name, e.g. "default" or "relay-demo". Client passes this back as `?session=`. */
   name: string;
   /** The session cfg.socketPath points at — all pre-multi-session behaviour maps to it. */
   isPrimary: boolean;
@@ -94,7 +94,7 @@ export interface SessionSummary {
  * bridge (or a response from before the feature existed) simply reads as "not enforced".
  */
 export interface DeviceAuth {
-  /** Whether per-device authorisation is enforced at all (COLLIE_DEVICE_HEADER is set). */
+  /** Whether per-device authorisation is enforced at all (HERDR_RELAY_DEVICE_HEADER is set). */
   enforced: boolean;
   /** The opaque device identifier from the trusted header, or null if absent / feature off. */
   device: string | null;
@@ -121,39 +121,10 @@ export interface SnapshotResponse {
    * single-session deployment lists just the primary, so the switcher UI can stay hidden.
    */
   sessions: SessionSummary[];
-  /** Notification quiet-hours: the active snooze deadline (epoch ms) or null. */
-  notifications?: { snoozedUntil: number | null };
-  /** Update-availability signal. Optional — a stale bridge that predates the field simply omits it,
-   *  which the client reads as "no info" (see bridge/update.ts). */
-  update?: UpdateStatus;
   ts: number;
 }
 
-/**
- * GET /api/snapshot `update` — whether the running plugin is behind (see bridge/update.ts). Both a
- * newer upstream RELEASE (`releaseAvailable` + `latest`) and a rebuilt-but-not-restarted bridge
- * PROCESS (`bridgeStale`) surface here; the client shows one banner, `bridgeStale` taking precedence.
- */
-export interface UpdateStatus {
-  /** Whether a canonical upstream repository is configured for release checks. */
-  enabled: boolean;
-  /** Outcome of the most recent attempted upstream check; null until one is attempted. */
-  lastCheckSucceeded: boolean | null;
-  /** The running bridge/plugin version, captured at process start. */
-  current: string;
-  /** Newest upstream release (dotted `X.Y.Z`, no leading `v`), or null if unknown/none yet. */
-  latest: string | null;
-  /** GitHub release page for `latest` (the banner links to it), or null when `latest` is unknown. */
-  latestUrl: string | null;
-  /** `latest` is strictly newer than `current`. */
-  releaseAvailable: boolean;
-  /** The running process is behind the on-disk bridge source — restart the rad-herdr-mobile-relay service. */
-  bridgeStale: boolean;
-  /** When the upstream check last completed (epoch ms), or null if it hasn't run yet. */
-  checkedAt: number | null;
-}
-
-/** GET /api/pane/:id — recent terminal output for one agent (ANSI/SGR, rendered colored). */
+/** GET /api/pane/:id — recent terminal output. */
 export interface PaneReadResponse {
   paneId: string;
   text: string;
@@ -257,21 +228,12 @@ export type WorktreeCreateResponse =
   | { ok: true; pane: CreatedPane; workspace: WorkspaceView; tab: TabView }
   | { ok: false; error: string; deliveryAmbiguous?: boolean };
 
-/** GET /api/config — bridge capabilities and the build id (push setup + stale-cache detection). */
+/** GET /api/config — running relay version. */
 export interface BridgeConfig {
-  push: boolean;
-  vapidPublicKey: string;
-  /** Whether the experimental ACP v2 WebSocket endpoint is enabled. */
-  acp?: boolean;
-  /** Build id of the bundle the bridge is currently serving (for stale-cache detection). */
-  build?: string;
+  build: string;
 }
 
-/** Rank for triage ordering — lower sorts first ("NEEDS YOU" at the top). */
+/** Rank for triage ordering. */
 export const STATUS_RANK: Record<AgentStatus, number> = {
-  blocked: 0,
-  working: 1,
-  unknown: 2,
-  idle: 3,
-  done: 4,
+  blocked: 0, working: 1, unknown: 2, idle: 3, done: 4,
 };

@@ -3,7 +3,6 @@ import { describe, expect, test } from "bun:test";
 import {
   deriveConfigRoot,
   discoverSessionSockets,
-  herdTagFor,
   SessionRegistry,
   sessionNameFor,
   type SessionFactory,
@@ -38,22 +37,13 @@ describe("sessionNameFor", () => {
   });
 
   test("a socket under sessions/<name> is named for its directory", () => {
-    expect(sessionNameFor(`${root}/sessions/collie-demo/herdr.sock`, root)).toBe("collie-demo");
+    expect(sessionNameFor(`${root}/sessions/relay-demo/herdr.sock`, root)).toBe("relay-demo");
   });
 
   test("a named-session HERDR_SOCKET_PATH resolves to that name via its derived root", () => {
     // The primary itself may be a named session (HERDR_SOCKET_PATH points at sessions/<name>).
     const sock = `${root}/sessions/work/herdr.sock`;
     expect(sessionNameFor(sock, deriveConfigRoot(sock))).toBe("work");
-  });
-});
-
-describe("herdTagFor", () => {
-  test("the primary keeps the bare collie:herd tag", () => {
-    expect(herdTagFor(true, "default")).toBe("rad-herdr-mobile-relay:herd");
-  });
-  test("a non-primary session tags collie:herd:<name>", () => {
-    expect(herdTagFor(false, "collie-demo")).toBe("rad-herdr-mobile-relay:herd:collie-demo");
   });
 });
 
@@ -109,7 +99,7 @@ const agent = (paneId: string, status: AgentStatus): AgentView => ({
 
 /** A stand-in runtime: a controllable engine snapshot + stop/clearAll spies (no real socket). */
 class FakeSession {
-  readonly disposed = { engine: 0, poker: 0, notifications: 0 };
+  readonly disposed = { engine: 0, poker: 0 };
   snap: EngineSnapshot;
   constructor(
     bridge: "connected" | "disconnected",
@@ -121,19 +111,10 @@ class FakeSession {
   parts(): SessionParts {
     const engine = { current: () => this.snap, stop: () => void this.disposed.engine++ };
     const poker = { stop: () => void this.disposed.poker++ };
-    const notifications = {
-      clearAll: async () => {
-        this.disposed.notifications++;
-        await this.disposeGate;
-      },
-      flush: () => Promise.resolve(),
-    };
     return {
       herdr: {} as unknown as SessionParts["herdr"],
       engine: engine as unknown as SessionParts["engine"],
       poker: poker as unknown as SessionParts["poker"],
-      notifications: notifications as unknown as SessionParts["notifications"],
-      resumeNotifications: () => {},
     };
   }
 }
@@ -273,7 +254,7 @@ describe("SessionRegistry — refresh() lifecycle", () => {
     expect(h.spawns).toEqual(["default", "demo"]);
   });
 
-  test("disposes a session whose socket vanished (engine + poker stopped, notifications cleared)", async () => {
+  test("disposes a session whose socket vanished (engine + poker stopped)", async () => {
     const h = makeRegistry({
       sessionDirs: ["demo"],
       present: ["/cfg/herdr/herdr.sock", "/cfg/herdr/sessions/demo/herdr.sock"],
@@ -284,7 +265,7 @@ describe("SessionRegistry — refresh() lifecycle", () => {
     h.setDirs([]);
     h.setPresent(["/cfg/herdr/herdr.sock"]);
     await h.registry.refresh();
-    expect(demo.disposed).toEqual({ engine: 1, poker: 1, notifications: 1 });
+    expect(demo.disposed).toEqual({ engine: 1, poker: 1 });
     expect(h.registry.get("demo")).toBeUndefined();
   });
 
@@ -307,7 +288,7 @@ describe("SessionRegistry — refresh() lifecycle", () => {
     releaseDisposal();
     await Promise.all([first, second]);
 
-    expect(demo.disposed).toEqual({ engine: 1, poker: 1, notifications: 1 });
+    expect(demo.disposed).toEqual({ engine: 1, poker: 1 });
     expect(h.registry.get("demo")).toBeUndefined();
   });
 
@@ -323,7 +304,7 @@ describe("SessionRegistry — refresh() lifecycle", () => {
     h.setPresent([]);
     await h.registry.refresh();
     expect(h.registry.get()?.name).toBe("default"); // primary still resolvable
-    expect(primaryFake.disposed).toEqual({ engine: 0, poker: 0, notifications: 0 });
+    expect(primaryFake.disposed).toEqual({ engine: 0, poker: 0 });
   });
 
   test("multi-session off pins to the primary — refresh never scans or spawns", async () => {
@@ -347,30 +328,9 @@ describe("SessionRegistry — refresh() lifecycle", () => {
     const primaryFake = h.fakes.get("default")!;
     const demoFake = h.fakes.get("demo")!;
     await h.registry.disposeAll();
-    expect(primaryFake.disposed).toEqual({ engine: 1, poker: 1, notifications: 1 });
-    expect(demoFake.disposed).toEqual({ engine: 1, poker: 1, notifications: 1 });
+    expect(primaryFake.disposed).toEqual({ engine: 1, poker: 1 });
+    expect(demoFake.disposed).toEqual({ engine: 1, poker: 1 });
     expect(h.registry.get()).toBeUndefined();
   });
 
-  test("process-restart disposal preserves delivered notification slots", async () => {
-    const h = makeRegistry();
-    const primaryFake = h.fakes.get("default")!;
-    await h.registry.disposeAll({ clearNotifications: false });
-    expect(primaryFake.disposed).toEqual({ engine: 1, poker: 1, notifications: 0 });
-  });
-
-  test("restart can preserve only the stable primary slot and clear named-session slots", async () => {
-    const h = makeRegistry({
-      sessionDirs: ["demo"],
-      present: ["/cfg/herdr/herdr.sock", "/cfg/herdr/sessions/demo/herdr.sock"],
-    });
-    await h.registry.refresh();
-    const primaryFake = h.fakes.get("default")!;
-    const demoFake = h.fakes.get("demo")!;
-
-    await h.registry.disposeAll({ clearNotifications: (runtime) => !runtime.isPrimary });
-
-    expect(primaryFake.disposed).toEqual({ engine: 1, poker: 1, notifications: 0 });
-    expect(demoFake.disposed).toEqual({ engine: 1, poker: 1, notifications: 1 });
-  });
 });

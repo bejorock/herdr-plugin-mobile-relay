@@ -2,7 +2,6 @@ import { basename, dirname, join } from "node:path";
 
 import type { EventPoker } from "./event-poker.ts";
 import type { HerdrClient } from "./herdr-client.ts";
-import type { NotificationCoordinator } from "./notifications.ts";
 import type { StateEngine } from "./state-engine.ts";
 import type { SessionSummary } from "./types.ts";
 
@@ -22,18 +21,6 @@ import type { SessionSummary } from "./types.ts";
 
 /** The default session's name — the one whose socket is `<configRoot>/herdr.sock`. */
 export const DEFAULT_SESSION_NAME = "default";
-/** The base notification tag; the whole herd of one session shares this slot. */
-const HERD_TAG_BASE = "rad-herdr-mobile-relay:herd";
-
-/**
- * The herd notification tag for a session. The primary keeps the bare `collie:herd` (so
- * notifications outstanding from before this feature don't orphan); every other session gets
- * `collie:herd:<name>` so its alerts occupy their own slot. Pure + exported for tests.
- */
-export function herdTagFor(isPrimary: boolean, name: string): string {
-  return isPrimary ? HERD_TAG_BASE : `${HERD_TAG_BASE}:${name}`;
-}
-
 /**
  * The config root that holds a session layout, derived from a socket path. If the socket sits at
  * `…/sessions/<name>/herdr.sock` the root is the prefix before `/sessions/`; otherwise it's just the
@@ -79,14 +66,11 @@ export function discoverSessionSockets(
   return found;
 }
 
-/** The live per-session pieces a factory builds. push/snooze/notify-prefs/audit stay process-global. */
+/** The live per-session Herdr services. */
 export interface SessionParts {
   herdr: HerdrClient;
   engine: StateEngine;
   poker: EventPoker;
-  notifications: NotificationCoordinator;
-  /** Rebuild notification state now, or defer until this session reconnects. */
-  resumeNotifications(): void;
 }
 
 /** A fully-built, running session runtime: its parts plus its identity in the registry. */
@@ -98,8 +82,8 @@ export interface SessionRuntime extends SessionParts {
 
 /**
  * Builds (and starts + wires) the runtime for one session. Injected into the registry so the bridge
- * supplies the real HerdrClient/StateEngine/EventPoker/NotificationCoordinator wiring while tests can
- * pass fakes. `isPrimary` is threaded so the factory can pick the primary's bare notification tag.
+ * supplies the real HerdrClient/StateEngine/EventPoker wiring while tests can
+ * pass fakes. `isPrimary` identifies the default runtime.
  */
 export type SessionFactory = (name: string, socketPath: string, isPrimary: boolean) => SessionParts;
 
@@ -160,7 +144,7 @@ export class SessionRegistry {
     return this.runtimes.get(name);
   }
 
-  /** Every live runtime — used by process-global fan-outs (prefs apply, snooze clear-all). */
+  /** Every live runtime. */
   all(): SessionRuntime[] {
     return [...this.runtimes.values()];
   }
@@ -212,27 +196,17 @@ export class SessionRegistry {
         if (this.runtimes.get(name) !== rt) continue;
         await this.dispose(rt);
         // Defensive identity check: never delete a replacement runtime if lifecycle ownership
-        // changes in the future while disposal is awaiting its notification flush.
+        // changes in the future while disposal is in progress.
         if (this.runtimes.get(name) === rt) this.runtimes.delete(name);
       }
     });
   }
 
-  /** Stop every runtime. Routine process restarts preserve delivered notification slots. */
-  disposeAll(options: {
-    clearNotifications?: boolean | ((runtime: SessionRuntime) => boolean);
-  } = {}): Promise<void> {
+  /** Stop every runtime and release event subscriptions. */
+  disposeAll(): Promise<void> {
     this.closed = true;
-    const clearNotifications = options.clearNotifications ?? true;
     return this.enqueueLifecycle(async () => {
-      await Promise.all(
-        [...this.runtimes.values()].map((runtime) => this.dispose(
-          runtime,
-          typeof clearNotifications === "function"
-            ? clearNotifications(runtime)
-            : clearNotifications,
-        )),
-      );
+      await Promise.all([...this.runtimes.values()].map((runtime) => this.dispose(runtime)));
       this.runtimes.clear();
     });
   }
@@ -248,11 +222,8 @@ export class SessionRegistry {
     return { name, isPrimary, socketPath, ...parts };
   }
 
-  private async dispose(rt: SessionRuntime, clearNotifications = true): Promise<void> {
+  private async dispose(rt: SessionRuntime): Promise<void> {
     rt.engine.stop();
     rt.poker.stop();
-    // Retract anything this session had on the lock screen — its slot must not linger.
-    if (clearNotifications) await rt.notifications.clearAll();
-    else await rt.notifications.flush();
   }
 }

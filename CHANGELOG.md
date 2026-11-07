@@ -1,5 +1,16 @@
 # Changelog
 
+## [2.0.0] - 2026-11-07
+
+### Changed
+
+- Reset to an API-only Herdr relay on the `lean-relay` branch. Preserve the previous implementation at `archive-acp-collie-v1.0.14`.
+- Remove ACP endpoint/SDK, bundled frontend/PWA, browser push, notification preferences/snooze, and background release/update alerts.
+- Keep Herdr HTTP management, workspace inspection, terminal WebSocket, audit and authorization protections.
+- Rename launcher to `scripts/relay-ctl.sh` and configuration to `HERDR_RELAY_*` (breaking; migrate existing dotenv values).
+- Preserve native transcript readers, private binding storage and hook/interaction foundations under `bridge/agents`; no replacement public agent API is exposed yet.
+
+
 ## [1.0.14] - 2026-11-04
 
 ### Fixed

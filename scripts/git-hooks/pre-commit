@@ -16,16 +16,15 @@ fi
 staged_blob() { git show ":$1" 2>/dev/null; }
 toml_v="$(staged_blob herdr-plugin.toml | sed -n 's/^[[:space:]]*version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
 pkg_v="$(staged_blob package.json | sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
-web_v="$(staged_blob web/package.json | sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
 log_v="$(staged_blob CHANGELOG.md | sed -n 's/^##[[:space:]]*\[\([0-9][^]]*\)\].*/\1/p' | head -1)"
-if [ -z "$toml_v" ] || [ "$pkg_v" != "$toml_v" ] || [ "$web_v" != "$toml_v" ] || [ "$log_v" != "$toml_v" ]; then
+if [ -z "$toml_v" ] || [ "$pkg_v" != "$toml_v" ] || [ "$log_v" != "$toml_v" ]; then
   echo "✗ pre-commit: staged version files and CHANGELOG must carry the same version." >&2
   exit 1
 fi
 
 # (2) bump-on-change — any functional path in this set requires a version bump.
 staged="$(git diff --cached --name-only)"
-if echo "$staged" | grep -qE '^(bridge/|web/src/|web/public/|web/vite\.config\.ts|web/index\.html|web/package\.json|scripts/|systemd/|package\.json|herdr-plugin\.toml)'; then
+if echo "$staged" | grep -qE '^(bridge/|scripts/|systemd/|package\.json|herdr-plugin\.toml)'; then
   read_ver() { sed -n 's/^[[:space:]]*version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' | head -1; }
   cur="$toml_v"
   prev="$(git show HEAD:herdr-plugin.toml 2>/dev/null | read_ver || true)"
@@ -33,7 +32,7 @@ if echo "$staged" | grep -qE '^(bridge/|web/src/|web/public/|web/vite\.config\.t
     if [ "$cur" = "$prev" ]; then
       cat >&2 <<EOF
 ✗ pre-commit: functional code changed but the version is still $cur.
-  Bump version in herdr-plugin.toml, package.json, web/package.json and add a CHANGELOG entry.
+  Bump version in herdr-plugin.toml, package.json and add a CHANGELOG entry.
   (Doc-only changes don't need a bump. Override once with SKIP_VERSION_CHECK=1 git commit.)
 EOF
       exit 1

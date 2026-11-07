@@ -1,29 +1,19 @@
 {
   "name": "rad-herdr-mobile-relay",
-  "version": "1.0.14",
+  "version": "2.0.0",
   "private": true,
   "license": "MIT",
   "type": "module",
-  "description": "A T3 Code-inspired control plane for Herdr sessions, built on the Collie bridge architecture",
+  "description": "Lean authenticated HTTP and terminal relay for Herdr",
   "scripts": {
     "dev": "bun run bridge/index.ts",
     "dev:bridge": "bun --watch bridge/index.ts",
-    "dev:web": "cd web && bun run dev",
-    "build": "bun install && cd web && bun install && cd .. && bun run typecheck && cd web && bun run build",
-    "build:web": "cd web && bun run build",
-    "test": "bun test ./bridge && cd web && bun run test",
-    "typecheck": "bunx tsc --noEmit && cd web && bun run typecheck"
+    "build": "bun install && bun run typecheck",
+    "test": "bun test ./bridge",
+    "typecheck": "bunx tsc --noEmit"
   },
   "devDependencies": {
     "@types/bun": "latest",
-    "@types/web-push": "^3.6.4",
     "typescript": "^6.0.3"
-  },
-  "optionalDependencies": {
-    "web-push": "^3.6.7"
-  },
-  "dependencies": {
-    "@agentclientprotocol/sdk": "2.0.2",
-    "zod": "^4.0.0"
   }
 }

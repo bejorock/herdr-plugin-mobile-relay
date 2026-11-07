@@ -1,25 +1,14 @@
 import { homedir } from "node:os";
-import { extname, join, normalize, sep } from "node:path";
+import { join } from "node:path";
 import type { AuditLog } from "./audit.ts";
 import { isLoopbackBindHost, MAX_READ_LINES, type Config } from "./config.ts";
 import { HerdrRequestError, type HerdrClient, type PaneRead } from "./herdr-client.ts";
 import { computeEtag, gzipJsonResponse, notModified } from "./http-cache.ts";
 import type { LiveUpdateHub } from "./live-updates.ts";
-import type { NotifyPrefs, NotifyPrefsStore } from "./notify-prefs.ts";
 import { ensurePrivateDirectory, writePrivateFile } from "./private-fs.ts";
-import { isTrustedPushSubscription, type Push, type PushSubscriptionOwner } from "./push.ts";
 import type { SessionRegistry } from "./sessions.ts";
-import type { Snooze } from "./snooze.ts";
 import { observeTerminalFrames } from "./terminal-observer.ts";
-import type { UpdateMonitor } from "./update.ts";
 import type { StateEngine } from "./state-engine.ts";
-import { AcpWebSocketServer } from "./acp/server.ts";
-import { AgentHookServer } from "./acp/hook.ts";
-import { AcpBindingStore } from "./acp/binding-store.ts";
-import { LiveAcpSessionRegistry } from "./acp/session-registry.ts";
-import { HerdrAcpProvisioner } from "./acp/provision.ts";
-import { PiAcpPromptSender } from "./acp/prompt.ts";
-import { PiAcpCanceller } from "./acp/cancel.ts";
 import {
   listWorkspaceFiles,
   readWorkspaceFile,
@@ -59,30 +48,6 @@ const IMAGE_EXT: Record<string, string> = {
   "image/gif": "gif",
 };
 
-// The built PWA lives in web/dist (Vite output). If it's missing, the bridge still runs the API
-// — only the static UI 503s with a hint to build.
-const WEB_DIR = join(import.meta.dir, "..", "web", "dist");
-
-const CONTENT_TYPES: Record<string, string> = {
-  ".html": "text/html; charset=utf-8",
-  ".js": "text/javascript; charset=utf-8",
-  ".css": "text/css; charset=utf-8",
-  ".json": "application/json; charset=utf-8",
-  ".webmanifest": "application/manifest+json; charset=utf-8",
-  ".png": "image/png",
-  ".svg": "image/svg+xml",
-  ".ico": "image/x-icon",
-  ".woff2": "font/woff2",
-};
-
-// Strict CSP. Scripts are external, hashed bundles (script-src 'self'); pane text is rendered by
-// React as text nodes, never markup, so terminal output can't inject. 'unsafe-inline' is allowed
-// for styles only (the toast library injects a <style> tag) — it can't execute code.
-const CSP =
-  "default-src 'self'; connect-src 'self'; img-src 'self' data:; " +
-  "style-src 'self' 'unsafe-inline'; font-src 'self' data:; script-src 'self'; worker-src 'self'; " +
-  "manifest-src 'self'; base-uri 'none'; frame-ancestors 'none'";
-
 // Hardening headers set on EVERY response (static + API), applied centrally in the fetch wrapper.
 // nosniff stops content-type confusion; no-referrer keeps the tailnet URL out of any Referer.
 const SECURITY_HEADERS: Record<string, string> = {
@@ -108,9 +73,6 @@ const MAX_TERMINAL_ROWS = 200;
 
 const PANE_ROUTE = /^\/api\/pane\/([^/]+)(?:\/(reply|input|submit|keys|upload|close))?$/;
 
-// Hook sockets are separate from Bun's HTTP listener. Keep their cleanup ownership keyed to the
-// returned Bun server so index.ts can stop both resources during graceful process shutdown.
-const acpHookServers = new WeakMap<object, { hook: AgentHookServer; acp: AcpWebSocketServer }>();
 const TAB_ROUTE = /^\/api\/tab\/([^/]+)$/;
 const WORKTREE_ROUTE = /^\/api\/worktree\/([^/]+)$/;
 const PANE_FOCUS_ROUTE = /^\/api\/focus\/([^/]+)$/;
@@ -120,13 +82,10 @@ const WORKSPACE_GIT_ROUTE = /^\/api\/workspace\/([^/]+)\/git$/;
 const WORKSPACE_DIFF_ROUTE = /^\/api\/workspace\/([^/]+)\/diff$/;
 
 interface LiveSocketData {
-  kind: "live" | "acp";
+  kind: "live";
   /** Present only for the existing terminal/live-update channel. */
   session?: string;
   canControl: boolean;
-  /** Auth context retained for ACP after the HTTP upgrade is complete. */
-  user?: string | null;
-  device?: string | null;
   paneWatch?: {
     paneId: string;
     cols: number;
@@ -172,11 +131,6 @@ export function decodeWorkspaceId(value: string): string {
   } catch {
     throw new WorkspaceInspectionError(400, "invalid workspace id encoding");
   }
-}
-
-/** Whether an agent-status preference change made a previously muted kind eligible. */
-export function notificationKindsReenabled(previous: NotifyPrefs, updated: NotifyPrefs): boolean {
-  return (!previous.blocked && updated.blocked) || (!previous.done && updated.done);
 }
 
 interface DedupeEntry<T> {
@@ -326,48 +280,12 @@ export class PaneMutationQueue {
 export function startServer(opts: {
   cfg: Config;
   registry: SessionRegistry;
-  push: Push;
-  snooze: Snooze;
-  notifyPrefs: NotifyPrefsStore;
-  updateMonitor: UpdateMonitor;
   audit: AuditLog;
   liveUpdates: LiveUpdateHub;
-  /** Running package version for ACP implementation metadata. */
+  /** Running relay version. */
   version?: string;
 }) {
-  const { cfg, registry, push, snooze, notifyPrefs, updateMonitor, audit, liveUpdates } = opts;
-  const acpSessions = cfg.acp ? new LiveAcpSessionRegistry(registry, new AcpBindingStore(cfg.stateDir)) : null;
-  const acp = acpSessions
-    ? new AcpWebSocketServer(
-        acpSessions,
-        opts.version ?? "0.0.0",
-        new HerdrAcpProvisioner(registry, acpSessions),
-        new PiAcpPromptSender(acpSessions, cfg.stateDir),
-        new PiAcpCanceller(acpSessions),
-        audit,
-      )
-    : null;
-  const hookServer = acp
-    ? new AgentHookServer(cfg.stateDir, registry, {
-        bind(binding) {
-          if (binding.agent === "claude" && binding.transcriptPath) acpSessions?.bindTranscript(binding.acpSessionId, binding.transcriptPath);
-        },
-        publish(binding, event) {
-          if (event.kind === "agent.state") {
-            acp.publishState(binding.acpSessionId, event.state);
-          } else if (event.kind === "message.delta") {
-            acp.publishDelta(binding.acpSessionId, event, binding.agent);
-          } else if (event.kind === "tool.update") {
-            acp.publishTool(binding.acpSessionId, event, binding.agent);
-          } else if (event.kind === "custom.notification") {
-            acp.publishCustom(binding.acpSessionId, event);
-          }
-        },
-        interaction(binding, event, resolve) {
-          acp.requestInteraction(binding.acpSessionId, event, resolve);
-        },
-      })
-    : null;
+  const { cfg, registry, audit, liveUpdates } = opts;
   const replyDeduplicator = new ReplyDeduplicator();
   const createDeduplicator = new CreateDeduplicator();
   const worktreeCreateDeduplicator = new WorktreeCreateDeduplicator();
@@ -383,12 +301,8 @@ export function startServer(opts: {
     return await resolveWorkspaceRoot(source.worktreeRoot, source.paneCwds);
   };
   if (!isLoopbackBindHost(cfg.host)) {
-    throw new Error(`refusing non-loopback COLLIE_HOST: ${cfg.host}`);
+    throw new Error(`refusing non-loopback HERDR_RELAY_HOST: ${cfg.host}`);
   }
-  // Per-session background notifications live in each session's runtime (built by the factory in
-  // index.ts, wired to its StateEngine transitions). The routes here only fan preference changes and
-  // snooze-clears across every live session's coordinator.
-
   const server = Bun.serve<LiveSocketData>({
     hostname: cfg.host,
     port: cfg.port,
@@ -418,19 +332,6 @@ export function startServer(opts: {
         return text("websocket upgrade required", 426);
       }
 
-      if (pathname === "/acp") {
-        if (!acp) return text("ACP is disabled", 404);
-        const gate = checkAccess(req, cfg);
-        if (!gate.ok) return text(gate.reason, 403);
-        const device = deviceAuth(req, cfg);
-        const canWrite = !device.enforced || device.authorized;
-        const user = req.headers.get(cfg.trustedUserHeader) ?? null;
-        if (bunServer.upgrade(req, {
-          data: { kind: "acp", canControl: canWrite, user, device: device.device },
-        })) return;
-        return text("websocket upgrade required", 426);
-      }
-
       // ── Live state (polled by the client) ────────────────────────────────
       if (pathname === "/api/snapshot") {
         const gate = checkAccess(req, cfg);
@@ -439,7 +340,7 @@ export function startServer(opts: {
         if (!rt) return unknownSession();
         const { agents, shellPanes, workspaces, tabs, bridge } = rt.engine.current();
         // Native session references can contain absolute transcript paths. They are retained inside
-        // StateEngine for ACP binding, but the established REST snapshot must never disclose them.
+        // StateEngine for native adapter binding, but the established REST snapshot must never disclose them.
         const publicPane = ({ nativeSession: _nativeSession, ...pane }: AgentView) => pane;
         const device = deviceAuth(req, cfg);
         return json(
@@ -452,8 +353,6 @@ export function startServer(opts: {
             workspaces,
             tabs,
             sessions: registry.list(),
-            notifications: { snoozedUntil: snooze.until() },
-            update: updateMonitor.status(),
             ts: Date.now(),
           } satisfies SnapshotResponse,
           req.headers.get("accept-encoding"),
@@ -752,198 +651,27 @@ export function startServer(opts: {
         if (denied) return denied;
         return json(
           {
-            push: push.enabled,
-            vapidPublicKey: push.publicKey,
-            acp: cfg.acp,
-            build: await buildId(),
+            build: opts.version ?? "development",
           } satisfies BridgeConfig,
           req.headers.get("accept-encoding"),
         );
       }
-      if (pathname === "/api/push-test" && req.method === "POST") {
-        // The CLI routes its manual delivery through the live bridge so subscription state has one
-        // process owner. This is a write-level operation because it alerts every registered device.
-        const denied = guard(req, cfg, "write");
-        if (denied) return denied;
-        let raw: unknown;
-        try {
-          raw = await req.json();
-        } catch {
-          return text("bad push test", 400);
-        }
-        const body = parsePushTestBody(raw);
-        if (!body) return text("bad push test", 400);
-        if (!push.enabled) return text("push is disabled", 409);
-        if (push.subscriptionCount === 0) return text("no subscribed devices", 409);
-        try {
-          const delivery = await push.notify(body.title, body.body, { paneId: body.paneId });
-          if (delivery.succeeded === 0) {
-            return text(
-              `push test failed: no delivery succeeded (${delivery.failed}/${delivery.attempted} failed)`,
-              502,
-            );
-          }
-          return json(
-            { ok: true, subscribers: delivery.succeeded },
-            req.headers.get("accept-encoding"),
-          );
-        } catch (error) {
-          return text(
-            `push test failed: ${error instanceof Error ? error.message : String(error)}`,
-            502,
-          );
-        }
-      }
-      if (pathname === "/api/subscribe" && req.method === "POST") {
-        // Registration creates a persistent outbound-delivery target, so it requires an authorised
-        // device even though receiving a notification is not terminal-driving.
-        const denied = guard(req, cfg, "write");
-        if (denied) return denied;
-        let body: unknown;
-        try {
-          body = await req.json();
-        } catch {
-          return text("bad subscription", 400);
-        }
-        if (!isTrustedPushSubscription(body)) return text("bad subscription", 400);
-        const auth = deviceAuth(req, cfg);
-        const owner: PushSubscriptionOwner = !auth.enforced
-          ? { kind: "unrestricted" }
-          : auth.device
-            ? { kind: "device", device: auth.device }
-            : { kind: "local" };
-        const added = await push.addSubscription(body, owner);
-        if (added === "disabled") return text("push is disabled", 409);
-        if (added === "full") return text("subscription limit reached", 429);
-        if (added === "invalid") return text("bad subscription", 400);
-        return secure(new Response(null, { status: 204 }));
-      }
-      if (pathname === "/api/subscribe" && req.method === "DELETE") {
-        // Self-revocation must remain available after a device is removed from the write allowlist.
-        const denied = guard(req, cfg, "read");
-        if (denied) return denied;
-        let body: unknown;
-        try {
-          body = await req.json();
-        } catch {
-          return text("bad subscription", 400);
-        }
-        if (!isJsonObject(body) || typeof body.endpoint !== "string" || !body.endpoint) {
-          return text("bad subscription", 400);
-        }
-        const auth = deviceAuth(req, cfg);
-        const actor: PushSubscriptionOwner | null = !auth.enforced
-          ? { kind: "unrestricted" }
-          : auth.device
-            ? { kind: "device", device: auth.device }
-            : auth.authorized
-              ? { kind: "local" }
-              : null;
-        const removed = await push.removeSubscription(body.endpoint, actor);
-        if (removed === "forbidden") return text("subscription owner mismatch", 403);
-        return secure(new Response(null, { status: 204 }));
-      }
-      if (pathname === "/api/notifications/snooze" && req.method === "POST") {
-        // Snooze is bridge-wide across every session and subscriber, so only an authorised device
-        // may change it. Read-only devices can still subscribe and inspect snapshot state.
-        const denied = guard(req, cfg, "write");
-        if (denied) return denied;
-        let body: unknown;
-        try {
-          body = await req.json();
-        } catch {
-          return text("bad request", 400);
-        }
-        if (!isJsonObject(body)) return text("bad request", 400);
-        const until = body.snoozedUntil;
-        if (until !== null && (typeof until !== "number" || !Number.isFinite(until))) {
-          return text("bad snoozedUntil", 400);
-        }
-        await snooze.set(until);
-        // Snoozing should also clear whatever's already on the lock screen — across every session,
-        // since snooze is bridge-wide. Each session owns its own notification slot (tag).
-        if (snooze.isMuted()) {
-          await Promise.all(registry.all().map((rt) => rt.notifications.clearAll()));
-        }
-        return json({ snoozedUntil: snooze.until() }, req.headers.get("accept-encoding"));
-      }
-      if (pathname === "/api/notifications/prefs") {
-        // Which agent statuses push (bridge-wide). Reading is available to every access-gated
-        // client; changing the shared policy requires an authorised device.
-        if (req.method === "GET") {
-          const denied = guard(req, cfg, "read");
-          if (denied) return denied;
-          return json(notifyPrefs.current(), req.headers.get("accept-encoding"));
-        }
-        if (req.method === "POST") {
-          const denied = guard(req, cfg, "write");
-          if (denied) return denied;
-          let body: unknown;
-          try {
-            body = await req.json();
-          } catch {
-            return text("bad request", 400);
-          }
-          const patch = parseNotifyPrefsPatch(body);
-          if (!patch) return text("bad prefs", 400);
-          const { previous, updated } = await notifyPrefs.setWithPrevious(patch);
-          // Prefs may have just disabled a kind — retract any pending/outstanding alerts of it, in
-          // every live session (prefs are bridge-wide; each session has its own coordinator).
-          for (const rt of registry.all()) rt.notifications.applyPrefs();
-          // A newly enabled kind needs an authoritative rebuild: an agent may have remained in that
-          // state while muted, so no future transition would restore it. The existing reconciler
-          // applies immediately for a connected session and defers across an outage.
-          if (notificationKindsReenabled(previous, updated)) {
-            for (const rt of registry.all()) rt.resumeNotifications();
-          }
-          if (!updated.updates) updateMonitor.clearNotification();
-          return json(updated, req.headers.get("accept-encoding"));
-        }
-        return text("method not allowed", 405);
-      }
-      if (pathname === "/api/update/check" && req.method === "POST") {
-        // Force an immediate upstream check (the "check for updates" button), instead of waiting for
-        // the periodic timer. Read-level — checking a version isn't terminal-driving — and idempotent
-        // (the monitor de-dupes concurrent checks). Returns the fresh status the client revalidates on.
-        const denied = guard(req, cfg, "read");
-        if (denied) return denied;
-        await updateMonitor.checkRelease();
-        return json(updateMonitor.status(), req.headers.get("accept-encoding"));
-      }
-
       // API typos and unsupported methods must never look like a successful SPA navigation.
       if (pathname === "/api" || pathname.startsWith("/api/")) return text("not found", 404);
 
-      // ── Static PWA (with SPA fallback) ───────────────────────────────────
-      return serveStatic(pathname);
+      // No bundled application or SPA fallback.
+      return text("not found", 404);
     },
     websocket: {
       open(socket) {
-        if (socket.data.kind === "acp") {
-          acp?.open(socket, {
-            user: socket.data.user ?? null,
-            device: socket.data.device ?? null,
-            canRead: true,
-            canWrite: socket.data.canControl,
-          });
-          return;
-        }
         liveUpdates.add(socket.data.session!, socket);
       },
       close(socket) {
-        if (socket.data.kind === "acp") {
-          acp?.close(socket);
-          return;
-        }
         socket.data.paneWatch?.close();
         liveUpdates.remove(socket.data.session!, socket);
       },
       message(socket, rawMessage) {
         const raw = String(rawMessage);
-        if (socket.data.kind === "acp") {
-          void acp?.message(socket, raw);
-          return;
-        }
         const scroll = parseLiveScrollMessage(raw);
         if (scroll) {
           if (socket.data.canControl && socket.data.paneWatch?.paneId === scroll.paneId) {
@@ -1031,13 +759,6 @@ export function startServer(opts: {
     },
   });
 
-  // The hook listener is intentionally best-effort at this early opt-in stage: normal Herdr
-  // control must keep running when a stale owner-only socket needs operator attention. ACP status
-  // will surface the missing hook capability rather than silently trusting a fallback transport.
-  if (hookServer) {
-    void hookServer.start().catch((error) => console.error("[acp] hook socket unavailable:", error));
-  }
-
   console.log(`[bridge] listening on http://${cfg.host}:${cfg.port}  (poll ${cfg.pollMs}ms)`);
   if (cfg.host !== "127.0.0.1" && cfg.host !== "localhost") {
     console.warn(
@@ -1050,13 +771,13 @@ export function startServer(opts: {
     );
     if (cfg.deviceAllowlist.length === 0) {
       console.warn(
-        `[bridge] WARNING: COLLIE_DEVICE_HEADER set but COLLIE_DEVICE_ALLOWLIST is empty — every device is read-only`,
+        `[bridge] WARNING: HERDR_RELAY_DEVICE_HEADER set but HERDR_RELAY_DEVICE_ALLOWLIST is empty — every device is read-only`,
       );
     }
   }
   if (!remoteIdentityConfigured(cfg)) {
     console.warn(
-      `[bridge] remote API access is disabled until COLLIE_TRUSTED_USER, COLLIE_TRUSTED_USERS, or COLLIE_ALLOW_ANY_TAILNET_USER is configured; direct loopback remains available.`,
+      `[bridge] remote API access is disabled until HERDR_RELAY_TRUSTED_USER, HERDR_RELAY_TRUSTED_USERS, or HERDR_RELAY_ALLOW_ANY_TAILNET_USER is configured; direct loopback remains available.`,
     );
   } else if (cfg.allowAnyTrustedUser) {
     console.warn(
@@ -1065,20 +786,11 @@ export function startServer(opts: {
   }
   if (cfg.publicHosts.length === 0 && cfg.allowedOrigins.length === 0) {
     console.warn(
-      `[bridge] remote Hosts are denied until COLLIE_PUBLIC_HOSTS or COLLIE_ALLOWED_ORIGINS is configured; loopback remains available.`,
+      `[bridge] remote Hosts are denied until HERDR_RELAY_PUBLIC_HOSTS or HERDR_RELAY_ALLOWED_ORIGINS is configured; loopback remains available.`,
     );
   }
 
-  if (hookServer && acp) acpHookServers.set(server, { hook: hookServer, acp });
   return server;
-}
-
-/** Stop the private ACP hook listener associated with one bridge HTTP server. */
-export async function stopAcpHooks(server: object): Promise<void> {
-  const services = acpHookServers.get(server);
-  acpHookServers.delete(server);
-  services?.acp.stop();
-  await services?.hook.stop();
 }
 
 export function parseLiveWatchMessage(raw: string): {
@@ -1372,27 +1084,6 @@ export function parseSubmitBody(
   if (!isJsonObject(value) || typeof value.data !== "string") return null;
   if (value.data.length > 65_536 || (value.key !== "Enter" && value.key !== "Tab")) return null;
   return { data: value.data, key: value.key };
-}
-
-export function parsePushTestBody(
-  value: unknown,
-): { title: string; body: string; paneId?: string } | null {
-  if (!isJsonObject(value)) return null;
-  if (
-    typeof value.title !== "string" ||
-    value.title.length === 0 ||
-    value.title.length > 128 ||
-    typeof value.body !== "string" ||
-    value.body.length === 0 ||
-    value.body.length > 512 ||
-    (value.paneId !== undefined && (typeof value.paneId !== "string" || value.paneId.length > 128))
-  )
-    return null;
-  return {
-    title: value.title,
-    body: value.body,
-    ...(value.paneId !== undefined ? { paneId: value.paneId } : {}),
-  };
 }
 
 export function parseCreateTabBody(
@@ -2176,7 +1867,7 @@ async function uploadPane(
 /**
  * Access gate for the API:
  *  - Host allowlist (mandatory for non-loopback): a loopback Host is trusted only when the server
- *    itself binds loopback; otherwise the Host must be in COLLIE_PUBLIC_HOSTS or an allowed origin.
+ *    itself binds loopback; otherwise the Host must be in HERDR_RELAY_PUBLIC_HOSTS or an allowed origin.
  *    This runs BEFORE Origin checks and defeats DNS rebinding.
  *  - Same-origin only (Origin host must equal Host) — defeats cross-site requests/CSRF. Browsers
  *    omit Origin on same-origin GETs (so the snapshot poll passes); they send it on POSTs.
@@ -2258,7 +1949,7 @@ export function checkAccess(
 
 /**
  * Whether a Host header is one the bridge will answer to: a loopback form while bound to loopback,
- * an explicit COLLIE_PUBLIC_HOSTS entry, or the host of a configured allowed origin. Pure + exported
+ * an explicit HERDR_RELAY_PUBLIC_HOSTS entry, or the host of a configured allowed origin. Pure + exported
  * for tests.
  */
 export function isHostAllowed(host: string, cfg: Config): boolean {
@@ -2326,7 +2017,7 @@ function guard(req: Request, cfg: Config, level: "read" | "write"): Response | n
 
 /**
  * Optional per-device authorisation, layered on top of {@link checkAccess}. Off by default; enabled
- * by setting COLLIE_DEVICE_HEADER to the header a trusted upstream proxy injects, carrying an opaque
+ * by setting HERDR_RELAY_DEVICE_HEADER to the header a trusted upstream proxy injects, carrying an opaque
  * device identifier. The header is trusted only because the bridge binds loopback behind the proxy,
  * so a direct client can't forge it (the same trust basis as the Tailscale identity header). Matrix:
  *
@@ -2364,7 +2055,7 @@ export function deviceAuth(req: Request, cfg: Config): DeviceAuth {
 }
 
 // Apply the shared hardening headers (nosniff / no-referrer) to any response. Every response the
-// bridge emits funnels through json(), text(), serveStatic(), or a handful of inline responses —
+// bridge emits funnels through json(), text(), or a handful of inline responses —
 // all of which pass through here — so the headers are set exactly once, consistently.
 function secure(res: Response): Response {
   for (const [k, v] of Object.entries(SECURITY_HEADERS)) res.headers.set(k, v);
@@ -2391,94 +2082,4 @@ function jsonError(message: string, status: number, _acceptEncoding: string | nu
 
 function text(body: string, status: number): Response {
   return secure(new Response(body, { status }));
-}
-
-/**
- * Validate an untrusted /api/notifications/prefs body into a partial patch. Only the known keys are
- * considered and each, if present, must be a boolean — a non-boolean value is rejected (null return
- * → 400). Unknown keys are ignored. An empty patch is valid (a no-op that echoes current prefs).
- * Pure + exported so the validation is unit-testable without Bun.serve.
- */
-export function parseNotifyPrefsPatch(v: unknown): Partial<NotifyPrefs> | null {
-  if (typeof v !== "object" || v === null) return null;
-  const o = v as Record<string, unknown>;
-  const patch: Partial<NotifyPrefs> = {};
-  for (const key of ["blocked", "done", "updates"] as const) {
-    if (!(key in o)) continue;
-    if (typeof o[key] !== "boolean") return null;
-    patch[key] = o[key] as boolean;
-  }
-  return patch;
-}
-
-// Build id of the bundle currently on disk (written by the Vite build to dist/build-info.json).
-// Surfaced via the X-Herdr-Control-Build header and /api/config so a stale cached client
-// can tell it's behind. Cached by file mtime so a frontend rebuild (live, no restart) is picked up.
-let buildCache: { id: string; mtime: number } | null = null;
-async function buildId(): Promise<string> {
-  try {
-    const f = Bun.file(join(WEB_DIR, "build-info.json"));
-    const mtime = f.lastModified;
-    if (!buildCache || buildCache.mtime !== mtime) {
-      const data = (await f.json()) as { id?: string };
-      buildCache = { id: data.id ?? "unknown", mtime };
-    }
-    return buildCache.id;
-  } catch {
-    return "unknown";
-  }
-}
-
-/**
- * Resolve a request pathname to an absolute path under `webDir`, or null if it escapes. Pure +
- * exported for tests. The `full === webDir || full.startsWith(webDir + sep)` check rejects both
- * `..` traversal AND a sibling dir that merely shares the prefix (e.g. `web/dist-x` vs `web/dist`) —
- * a bare `startsWith(webDir)` would let the latter through.
- */
-export function resolveStaticPath(
-  pathname: string,
-  webDir: string = WEB_DIR,
-): { rel: string; full: string } | null {
-  const rel = pathname === "/" ? "index.html" : pathname.replace(/^\/+/, "");
-  const full = normalize(join(webDir, rel));
-  if (full !== webDir && !full.startsWith(webDir + sep)) return null;
-  return { rel, full };
-}
-
-export async function serveStatic(pathname: string, webDir: string = WEB_DIR): Promise<Response> {
-  const resolved = resolveStaticPath(pathname, webDir);
-  if (!resolved) return text("forbidden", 403);
-  let { rel, full } = resolved;
-
-  let file = Bun.file(full);
-  if (!(await file.exists())) {
-    // SPA fallback: extension-less paths fall back to index.html; missing assets 404.
-    if (rel === "index.html") {
-      return text("frontend not built — run `bun run build` in web/", 503);
-    }
-    if (extname(rel) === "") {
-      rel = "index.html";
-      full = join(webDir, "index.html");
-      file = Bun.file(full);
-      if (!(await file.exists())) {
-        return text("frontend not built — run `bun run build` in web/", 503);
-      }
-    } else {
-      return text("not found", 404);
-    }
-  }
-
-  const ext = extname(full);
-  const headers: Record<string, string> = {
-    "content-type": CONTENT_TYPES[ext] ?? "application/octet-stream",
-    "x-rad-herdr-mobile-relay-build": await buildId(),
-  };
-  if (ext === ".html") {
-    headers["content-security-policy"] = CSP;
-    headers["cache-control"] = "no-cache";
-  } else if (rel.startsWith("assets/")) {
-    headers["cache-control"] = "public, max-age=31536000, immutable"; // hashed → cache hard
-  }
-  if (rel === "sw.js") headers["service-worker-allowed"] = "/";
-  return secure(new Response(file, { headers }));
 }

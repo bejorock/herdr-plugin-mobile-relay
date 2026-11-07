@@ -44,23 +44,23 @@ function envList(name: string): string[] {
 }
 
 function trustedUserHeader(): string {
-  const raw = process.env.COLLIE_TRUSTED_USER_HEADER;
+  const raw = process.env.HERDR_RELAY_TRUSTED_USER_HEADER;
   const value = raw?.trim().toLowerCase() ?? "";
   if (!value) return DEFAULT_TRUSTED_USER_HEADER;
   if (HTTP_HEADER_NAME.test(value)) return value;
   console.warn(
-    `[config] COLLIE_TRUSTED_USER_HEADER=${JSON.stringify(raw)} is not a valid HTTP header name — using ${DEFAULT_TRUSTED_USER_HEADER}`,
+    `[config] HERDR_RELAY_TRUSTED_USER_HEADER=${JSON.stringify(raw)} is not a valid HTTP header name — using ${DEFAULT_TRUSTED_USER_HEADER}`,
   );
   return DEFAULT_TRUSTED_USER_HEADER;
 }
 
 function deviceHeader(): string {
-  const raw = process.env.COLLIE_DEVICE_HEADER;
+  const raw = process.env.HERDR_RELAY_DEVICE_HEADER;
   const value = raw?.trim() ?? "";
   if (!value || HTTP_HEADER_NAME.test(value)) return value;
   const fallback = "x-herdr-invalid-device-header";
   console.warn(
-    `[config] COLLIE_DEVICE_HEADER=${JSON.stringify(raw)} is not a valid HTTP header name — using fail-closed ${fallback}`,
+    `[config] HERDR_RELAY_DEVICE_HEADER=${JSON.stringify(raw)} is not a valid HTTP header name — using fail-closed ${fallback}`,
   );
   return fallback;
 }
@@ -103,12 +103,6 @@ export interface Config {
    * one of these, never correctness. Falls back to {@link pollMs} the moment the stream drops.
    */
   pollIdleMs: number;
-  /**
-   * Debounce window before a blocked/done transition becomes a push, ms. An agent that resolves
-   * within this window (you handled it at your desk) never notifies; one that fires is retracted
-   * when it later resolves. See NotificationCoordinator. 0 = notify on the next tick (no debounce).
-   */
-  notifyDelayMs: number;
   /** How many lines of scrollback to pull for the agent detail view. */
   readLines: number;
   /** Key sequence sent to submit a reply after the text (agent-dependent; see HERDR_API.md). */
@@ -153,11 +147,7 @@ export interface Config {
   publicHosts: string[];
   /** Public proxy scheme used for same-origin checks. HTTPS by default; HTTP only in serve HTTP mode. */
   publicScheme: "http" | "https";
-  /** Web Push (VAPID). All three required to enable push; otherwise push is disabled. */
-  vapidPublic: string;
-  vapidPrivate: string;
-  vapidSubject: string;
-  /** Where to persist push subscriptions and other runtime state. */
+  /** Private runtime state and uploads. */
   stateDir: string;
   /**
    * Multi-session support. When on (default), the bridge fronts every running herdr session it
@@ -167,53 +157,46 @@ export interface Config {
    * already-discovered session; they never build a filesystem path.
    */
   multiSession: boolean;
-  /** Enables the experimental ACP v2 WebSocket endpoint. On by default; set COLLIE_ACP=off to disable it. */
-  acp: boolean;
 }
 
 export function loadConfig(): Config {
   const stateDir =
     process.env.HERDR_PLUGIN_STATE_DIR ??
-    process.env.COLLIE_STATE_DIR ??
+    process.env.HERDR_RELAY_STATE_DIR ??
     join(homedir(), ".local", "state", "rad-herdr-mobile-relay");
 
-  const submitKeys = envList("COLLIE_SUBMIT_KEYS");
-  const requestedHost = (process.env.COLLIE_HOST ?? "127.0.0.1").trim();
+  const submitKeys = envList("HERDR_RELAY_SUBMIT_KEYS");
+  const requestedHost = (process.env.HERDR_RELAY_HOST ?? "127.0.0.1").trim();
   const host = isLoopbackBindHost(requestedHost) ? requestedHost : "127.0.0.1";
   if (host !== requestedHost) {
-    console.warn(`[config] COLLIE_HOST=${JSON.stringify(requestedHost)} is not loopback — using 127.0.0.1`);
+    console.warn(`[config] HERDR_RELAY_HOST=${JSON.stringify(requestedHost)} is not loopback — using 127.0.0.1`);
   }
 
-  const port = process.env.HERDR_CONTROL_EFFECTIVE_PORT !== undefined
-    ? envInt("HERDR_CONTROL_EFFECTIVE_PORT", 8787, { min: 1, max: 65535 })
-    : envInt("COLLIE_PORT", 8787, { min: 1, max: 65535 });
-  const publicHosts = process.env.HERDR_CONTROL_EFFECTIVE_PUBLIC_HOSTS !== undefined
-    ? envList("HERDR_CONTROL_EFFECTIVE_PUBLIC_HOSTS")
-    : envList("COLLIE_PUBLIC_HOSTS");
+  const port = process.env.HERDR_RELAY_EFFECTIVE_PORT !== undefined
+    ? envInt("HERDR_RELAY_EFFECTIVE_PORT", 8787, { min: 1, max: 65535 })
+    : envInt("HERDR_RELAY_PORT", 8787, { min: 1, max: 65535 });
+  const publicHosts = process.env.HERDR_RELAY_EFFECTIVE_PUBLIC_HOSTS !== undefined
+    ? envList("HERDR_RELAY_EFFECTIVE_PUBLIC_HOSTS")
+    : envList("HERDR_RELAY_PUBLIC_HOSTS");
 
   return {
     socketPath: process.env.HERDR_SOCKET_PATH ?? join(homedir(), ".config", "herdr", "herdr.sock"),
     port,
     host,
-    pollMs: envInt("COLLIE_POLL_MS", 1500, { min: 250, max: 2_147_483_647 }),
-    pollIdleMs: envInt("COLLIE_POLL_IDLE_MS", 12_000, { min: 1000, max: 2_147_483_647 }),
-    notifyDelayMs: envInt("COLLIE_NOTIFY_DELAY_MS", 30_000, { min: 0, max: 2_147_483_647 }),
-    readLines: envInt("COLLIE_READ_LINES", 200, { min: 1, max: MAX_READ_LINES }),
+    pollMs: envInt("HERDR_RELAY_POLL_MS", 1500, { min: 250, max: 2_147_483_647 }),
+    pollIdleMs: envInt("HERDR_RELAY_POLL_IDLE_MS", 12_000, { min: 1000, max: 2_147_483_647 }),
+    readLines: envInt("HERDR_RELAY_READ_LINES", 200, { min: 1, max: MAX_READ_LINES }),
     submitKeys: submitKeys.length ? submitKeys : ["Enter"],
-    trustedUser: process.env.COLLIE_TRUSTED_USER?.trim() ?? "",
-    trustedUsers: [...new Set(envList("COLLIE_TRUSTED_USERS"))],
-    allowAnyTrustedUser: envBool("COLLIE_ALLOW_ANY_TAILNET_USER", false),
+    trustedUser: process.env.HERDR_RELAY_TRUSTED_USER?.trim() ?? "",
+    trustedUsers: [...new Set(envList("HERDR_RELAY_TRUSTED_USERS"))],
+    allowAnyTrustedUser: envBool("HERDR_RELAY_ALLOW_ANY_TAILNET_USER", false),
     trustedUserHeader: trustedUserHeader(),
     deviceHeader: deviceHeader(),
-    deviceAllowlist: envList("COLLIE_DEVICE_ALLOWLIST"),
-    allowedOrigins: envList("COLLIE_ALLOWED_ORIGINS"),
+    deviceAllowlist: envList("HERDR_RELAY_DEVICE_ALLOWLIST"),
+    allowedOrigins: envList("HERDR_RELAY_ALLOWED_ORIGINS"),
     publicHosts,
-    publicScheme: process.env.COLLIE_SERVE_MODE?.trim().toLowerCase() === "http" ? "http" : "https",
-    vapidPublic: process.env.COLLIE_VAPID_PUBLIC ?? "",
-    vapidPrivate: process.env.COLLIE_VAPID_PRIVATE ?? "",
-    vapidSubject: process.env.COLLIE_VAPID_SUBJECT ?? "mailto:admin@example.com",
+    publicScheme: process.env.HERDR_RELAY_SERVE_MODE?.trim().toLowerCase() === "http" ? "http" : "https",
     stateDir,
-    multiSession: envBool("COLLIE_MULTI_SESSION", true),
-    acp: envBool("COLLIE_ACP", true),
+    multiSession: envBool("HERDR_RELAY_MULTI_SESSION", true),
   };
 }

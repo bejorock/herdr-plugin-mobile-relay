@@ -11,7 +11,7 @@ An authenticated, loopback-only HTTP relay for Herdr, with optional native termi
 
 There is **no bundled application/PWA, browser Web Push, notification preferences, release-alert service, or `/acp` endpoint**.
 
-HTTP harness discovery and native conversation create/read/resume are implemented; see [HTTP lifecycle contract](docs/HTTP_LIFECYCLE.md) for schemas, errors and limitations. These lifecycle paths have automated mocked-Herdr coverage, **not live native validation of this HTTP implementation yet**. Discovery reports `unknown` where Herdr only proves an installed hook, not executable availability.
+HTTP harness discovery and native conversation create/read/resume are implemented; see [HTTP lifecycle contract](docs/HTTP_LIFECYCLE.md) for schemas, errors and limitations. These lifecycle paths have automated mocked-Herdr coverage and [live Pi/Claude HTTP validation](docs/HTTP_LIFECYCLE_LIVE_VALIDATION.md), including native context recall after recovery. Fault-injected launch failures remain mocked-test coverage only. Discovery reports `unknown` where Herdr only proves an installed hook, not executable availability.
 
 Native Pi/Claude transcript readers and hook/request-response foundations remain under `bridge/agents/`. Public transcript/event/interaction-response endpoints and the active hook listener are **not implemented yet**. Durable restoration is HTTP-only; ACP is removed.
 

@@ -1,6 +1,6 @@
 # HTTP lifecycle — first increment contract
 
-Status: implemented first-increment contract for discovery and native conversation creation/restoration on `lean-relay`; automated mocked-Herdr validation only, not live native acceptance yet. No ACP methods or envelopes. Transcript/event/interaction and folder endpoints are separate increments.
+Status: implemented first-increment contract for discovery and native conversation creation/restoration on `lean-relay`. [Live Pi/Claude HTTP validation](HTTP_LIFECYCLE_LIVE_VALIDATION.md) covers ordinary create/restart/exit/pane-close restoration and native context recall; fault-injected launch ambiguity remains automated mocked coverage. No ACP methods or envelopes. Transcript/event/interaction and folder endpoints are separate increments.
 
 All routes use existing Host/Origin/Tailscale/device authorization. `?session=<name>` selects a discovered Herdr runtime; omitted selects primary. Unknown runtime: 404 `runtime_unknown`; unreachable: 503 `runtime_unavailable`. Errors use `{ "error": { "code": "machine_code", "message": "bounded explanation" } }` without native IDs/paths or raw backend errors.
 

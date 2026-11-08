@@ -1,5 +1,17 @@
 # Changelog
 
+## [2.0.4] - 2026-11-07
+
+### Added
+
+- HTTP root/directory browsing with bounded pagination, cwd validation, and explicit single-child directory creation with retry deduplication and write authorization/audit.
+- Explicit `HERDR_RELAY_BROWSE_ROOTS` owner policy, disabled by default, with conservative symlink rejection and Linux descriptor-anchored operations instead of unsafe path check/mkdir races.
+
+### Validation and limits
+
+- Real-filesystem and HTTP tests plus isolated live directory lifecycle checks; Herdr workspace inventory and production service remained unchanged.
+- Directory operations currently require Linux `/proc/self/fd` and same local filesystem/user context. Other platforms fail explicitly rather than weakening containment; existing terminal/management support is unaffected.
+
 ## [2.0.3] - 2026-11-07
 
 ### Added

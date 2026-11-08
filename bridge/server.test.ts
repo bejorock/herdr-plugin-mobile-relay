@@ -35,6 +35,7 @@ import { HerdrRequestError, type PaneRead } from "./herdr-client.ts";
 import { LifecycleError, type ConversationService } from "./agents/conversations.ts";
 import type { TranscriptService } from "./agents/transcripts.ts";
 import { HerdrEventHub } from "./http-events.ts";
+import type { DirectoryService } from "./directories.ts";
 
 // checkAccess is the API security gate (same-origin/CSRF + optional Tailscale identity). A
 // regression here silently opens remote shell access, so it gets the most direct coverage.
@@ -200,6 +201,30 @@ describe("lean API surface", () => {
           expect((await fetch(`${base}${path}`, { method })).status).toBe(404);
         }
       }
+    } finally { await server.stop(true); }
+  });
+});
+
+describe("HTTP directory routes", () => {
+  test("routes roots/list/validate/create with runtime selection and write authorization", async () => {
+    const calls: unknown[] = [];
+    const service = {
+      list: async (...args: unknown[]) => { calls.push(args); return { roots: [] }; },
+      validate: async (...args: unknown[]) => { calls.push(args); return { path: "/root", valid: true, reason: null }; },
+      create: async (...args: unknown[]) => { calls.push(args); return { ok: true, path: "/root/new", created: true }; },
+    } as unknown as DirectoryService;
+    const server = startServer({ cfg: cfg({ port: 0, publicHosts: ["relay.test"], deviceHeader: "x-device", deviceAllowlist: ["owner"] }), registry: {} as never,
+      directories: service, audit: { record: () => {} } as never, liveUpdates: {} as never });
+    try {
+      const base = `http://127.0.0.1:${server.port}`;
+      expect((await fetch(base + "/api/directories?session=work")).status).toBe(200); expect(calls[0]).toEqual(["work", undefined]);
+      await fetch(base + "/api/directories?session=work&path=%2Froot&limit=2&cursor=abc"); expect(calls[1]).toEqual(["work", { path: "/root", limit: 2, cursor: "abc" }]);
+      await fetch(base + "/api/directories/validate?session=work&path=%2Froot"); expect(calls[2]).toEqual(["work", "/root"]);
+      expect((await fetch(base + "/api/directories?limit=100")).status).toBe(400);
+      const post = (headers: Record<string, string> = {}) => fetch(base + "/api/directories?session=work", { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify({ parentPath: "/root", name: "new", requestId: "r1" }) });
+      expect((await post({ host: "relay.test", origin: "https://relay.test", "tailscale-user-login": "me@example.com", "x-device": "observer" })).status).toBe(403);
+      expect(calls).toHaveLength(3);
+      expect((await post()).status).toBe(200); expect(calls[3]).toEqual(["work", { parentPath: "/root", name: "new", requestId: "r1" }]);
     } finally { await server.stop(true); }
   });
 });

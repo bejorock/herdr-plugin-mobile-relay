@@ -6,6 +6,7 @@ An authenticated, loopback-only HTTP relay for Herdr, with optional native termi
 
 - Herdr runtime snapshots and named-runtime selection.
 - Workspace/tab/worktree and pane management, terminal input, bounded image uploads, and workspace file/Git inspection.
+- Owner-configured host folder browse/validate/create on Linux, separate from Herdr workspace creation. Disabled by default; [directory contract](docs/HTTP_DIRECTORIES.md).
 - Optional `/api/live` WebSocket: Herdr-derived snapshot invalidations and terminal frames. This is **terminal output, not an agent transcript**.
 - Loopback binding, Tailscale Serve identity checks, optional device write authorization, and audit logging.
 
@@ -63,6 +64,7 @@ Install/migrate native adapters explicitly using `bun run scripts/agent-integrat
 - [HTTP lifecycle contract and limitations](docs/HTTP_LIFECYCLE.md)
 - [HTTP transcript and Herdr SSE contract](docs/HTTP_STREAMS.md)
 - [HTTP interactions, native adapter installation and live evidence](docs/HTTP_INTERACTIONS.md)
+- [Host folder operations, root configuration and platform limits](docs/HTTP_DIRECTORIES.md)
 - [Terminal WebSocket reference](docs/DEVELOPER_API.md)
 - [Architecture and remaining work](docs/ARCHITECTURE.md)
 - [Revamp direction and implementation assessment](docs/LEAN_RELAY_REVAMP.md) — agreed scope, adapter changes, phases and acceptance; not yet implemented API contracts.

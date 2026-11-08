@@ -147,6 +147,8 @@ export interface Config {
   publicHosts: string[];
   /** Public proxy scheme used for same-origin checks. HTTPS by default; HTTP only in serve HTTP mode. */
   publicScheme: "http" | "https";
+  /** Owner-approved local directory picker roots; absent/empty disables filesystem browsing. */
+  browseRoots?: Array<{ name: string; path: string }>;
   /** Private runtime state and uploads. */
   stateDir: string;
   /**
@@ -157,6 +159,21 @@ export interface Config {
    * already-discovered session; they never build a filesystem path.
    */
   multiSession: boolean;
+}
+
+function browseRoots(): Array<{ name: string; path: string }> {
+  const raw = process.env.HERDR_RELAY_BROWSE_ROOTS;
+  if (!raw?.trim()) return [];
+  let roots: unknown;
+  try { roots = JSON.parse(raw); } catch { throw new Error("HERDR_RELAY_BROWSE_ROOTS must be a JSON root array"); }
+  if (!Array.isArray(roots) || roots.length > 16 || roots.some((root) => !root || typeof root !== "object" ||
+      typeof root.name !== "string" || !root.name.trim() || root.name.length > 128 || /[\x00-\x1f\x7f]/.test(root.name) ||
+      typeof root.path !== "string" || !root.path.startsWith("/") || root.path.length > 4096 || /[\x00-\x1f\x7f]/.test(root.path) || root.path.split("/").some((s: string) => s === "." || s === ".."))) {
+    throw new Error("HERDR_RELAY_BROWSE_ROOTS contains invalid roots");
+  }
+  const result = roots.map((root) => ({ name: root.name.trim(), path: root.path.replace(/\/+$/, "") || "/" }));
+  if (new Set(result.map((root) => root.path)).size !== result.length) throw new Error("HERDR_RELAY_BROWSE_ROOTS contains duplicate roots");
+  return result;
 }
 
 export function loadConfig(): Config {
@@ -197,6 +214,7 @@ export function loadConfig(): Config {
     publicHosts,
     publicScheme: process.env.HERDR_RELAY_SERVE_MODE?.trim().toLowerCase() === "http" ? "http" : "https",
     stateDir,
+    browseRoots: browseRoots(),
     multiSession: envBool("HERDR_RELAY_MULTI_SESSION", true),
   };
 }

@@ -1,6 +1,6 @@
 id = "rad.herdr-mobile-relay"
 name = "Herdr Mobile Relay"
-version = "2.0.3"
+version = "2.0.4"
 min_herdr_version = "0.7.0"
 description = "Lean Herdr management relay: native status/events, terminal streaming, and management APIs over Tailscale"
 platforms = ["linux", "macos"]

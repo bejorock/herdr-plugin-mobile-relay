@@ -4,6 +4,7 @@ import type { AuditLog } from "./audit.ts";
 import { ConversationService, ConversationStore, LifecycleError, REQUEST_ID } from "./agents/conversations.ts";
 import { TranscriptService } from "./agents/transcripts.ts";
 import { InteractionService } from "./agents/interaction-service.ts";
+import { DirectoryService } from "./directories.ts";
 import { AgentHookServer } from "./agents/hook.ts";
 import { HerdrEventHub, HttpStreams } from "./http-events.ts";
 import { isLoopbackBindHost, MAX_READ_LINES, type Config } from "./config.ts";
@@ -303,6 +304,7 @@ export function startServer(opts: {
   herdrEvents?: HerdrEventHub;
   interactions?: InteractionService;
   enableHooks?: boolean;
+  directories?: DirectoryService;
 }) {
   const { cfg, registry, audit, liveUpdates } = opts;
   // Tests may inject a service; production uses its owner-only journal.
@@ -314,6 +316,7 @@ export function startServer(opts: {
   const herdrEvents = opts.herdrEvents ?? new HerdrEventHub();
   let interactions = opts.interactions;
   const requests = () => interactions ??= new InteractionService(lifecycle(), herdrEvents);
+  const directories = opts.directories ?? new DirectoryService(registry, cfg.browseRoots ?? []);
   const replyDeduplicator = new ReplyDeduplicator();
   const createDeduplicator = new CreateDeduplicator();
   const worktreeCreateDeduplicator = new WorktreeCreateDeduplicator();
@@ -350,6 +353,31 @@ export function startServer(opts: {
       const sessionName = url.searchParams.get("session") ?? undefined;
       const unknownSession = () =>
         jsonError(`unknown session: ${sessionName ?? ""}`, 404, req.headers.get("accept-encoding"));
+
+      if (pathname === "/api/directories" || pathname === "/api/directories/validate") {
+        const denied = guard(req, cfg, req.method === "POST" ? "write" : "read");
+        if (denied) return denied;
+        if (req.method !== "GET" && !(req.method === "POST" && pathname === "/api/directories")) return text("method not allowed", 405);
+        try {
+          if (req.method === "POST") {
+            let body: unknown;
+            try { body = await req.json(); } catch { throw new LifecycleError(400, "invalid_request", "Expected a JSON object"); }
+            const result = await directories.create(sessionName, body);
+            audit.record({ action: "directory.create", session: sessionName, device: deviceAuth(req, cfg).device, detail: { path: result.path, created: result.created } });
+            return json(result, req.headers.get("accept-encoding"));
+          }
+          const path = url.searchParams.get("path");
+          if (pathname === "/api/directories/validate") return json(await directories.validate(sessionName, path), req.headers.get("accept-encoding"));
+          const rawLimit = url.searchParams.get("limit");
+          if (rawLimit !== null && !/^\d{1,3}$/.test(rawLimit)) throw new LifecycleError(400, "invalid_request", "Invalid directory limit");
+          const cursor = url.searchParams.get("cursor") ?? undefined;
+          if (path === null && (rawLimit !== null || cursor !== undefined)) throw new LifecycleError(400, "invalid_request", "Directory pagination requires path");
+          return json(await directories.list(sessionName, path === null ? undefined : { path, limit: rawLimit === null ? undefined : Number(rawLimit), cursor }), req.headers.get("accept-encoding"));
+        } catch (error) {
+          const failure = error instanceof LifecycleError ? error : new LifecycleError(500, "internal_error", "Directory operation failed");
+          return secure(new Response(JSON.stringify({ error: { code: failure.code, message: failure.message } }), { status: failure.status, headers: { "content-type": "application/json; charset=utf-8" } }));
+        }
+      }
 
       const responseMatch = pathname.match(/^\/api\/interactions\/([^/]+)\/response$/);
       if (pathname === "/api/interactions" || responseMatch) {

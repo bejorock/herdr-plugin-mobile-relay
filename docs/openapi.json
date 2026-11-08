@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Herdr Mobile Relay REST API",
-    "version": "2.0.3",
+    "version": "2.0.4",
     "description": "Lean Herdr HTTP API and optional terminal WebSocket. No bundled UI, browser push, or ACP endpoint."
   },
   "servers": [
@@ -31,6 +31,10 @@
     {
       "name": "Interactions",
       "description": "Actual live waits from integrated hooks/extensions, not inferred transcript actions."
+    },
+    {
+      "name": "Directories",
+      "description": "Owner-authorized local folder picker, distinct from Herdr workspace creation."
     }
   ],
   "paths": {
@@ -1817,6 +1821,419 @@
           }
         }
       }
+    },
+    "/api/directories": {
+      "get": {
+        "tags": [
+          "Directories"
+        ],
+        "description": "Owner-configured roots only; no symlink components, no Herdr workspace/agent mutation. See HTTP_DIRECTORIES.md for Linux support, root policy, limits and deduplication.",
+        "summary": "List approved roots or immediate child directories",
+        "parameters": [
+          {
+            "name": "session",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "path",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 100
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Roots without path; directory listing with path",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/DirectoryRoots"
+                    },
+                    {
+                      "$ref": "#/components/schemas/DirectoryListing"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Structured filesystem/runtime error; Linux-only safe traversal in this increment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Structured filesystem/runtime error; Linux-only safe traversal in this increment; authorization gate may return plain text",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Structured filesystem/runtime error; Linux-only safe traversal in this increment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Structured filesystem/runtime error; Linux-only safe traversal in this increment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleError"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Structured filesystem/runtime error; Linux-only safe traversal in this increment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Structured filesystem/runtime error; Linux-only safe traversal in this increment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Structured filesystem/runtime error; Linux-only safe traversal in this increment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Structured filesystem/runtime error; Linux-only safe traversal in this increment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Directories"
+        ],
+        "description": "Owner-configured roots only; no symlink components, no Herdr workspace/agent mutation. See HTTP_DIRECTORIES.md for Linux support, root policy, limits and deduplication.",
+        "summary": "Explicitly create one child directory",
+        "parameters": [
+          {
+            "name": "session",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "parentPath",
+                  "name",
+                  "requestId"
+                ],
+                "properties": {
+                  "parentPath": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 255
+                  },
+                  "requestId": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9._:-]{1,128}$"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Created, existing directory, or cached same-request result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "path",
+                    "created"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": true
+                    },
+                    "path": {
+                      "type": "string"
+                    },
+                    "created": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Structured filesystem/runtime error; Linux-only safe traversal in this increment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Structured filesystem/runtime error; Linux-only safe traversal in this increment; authorization gate may return plain text",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Structured filesystem/runtime error; Linux-only safe traversal in this increment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Structured filesystem/runtime error; Linux-only safe traversal in this increment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleError"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Structured filesystem/runtime error; Linux-only safe traversal in this increment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Structured filesystem/runtime error; Linux-only safe traversal in this increment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Structured filesystem/runtime error; Linux-only safe traversal in this increment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Structured filesystem/runtime error; Linux-only safe traversal in this increment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/directories/validate": {
+      "get": {
+        "tags": [
+          "Directories"
+        ],
+        "description": "Owner-configured roots only; no symlink components, no Herdr workspace/agent mutation. See HTTP_DIRECTORIES.md for Linux support, root policy, limits and deduplication.",
+        "summary": "Validate an existing cwd without creating anything",
+        "parameters": [
+          {
+            "name": "session",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "path",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DirectoryValidation"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Structured filesystem/runtime error; Linux-only safe traversal in this increment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Structured filesystem/runtime error; Linux-only safe traversal in this increment; authorization gate may return plain text",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Structured filesystem/runtime error; Linux-only safe traversal in this increment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Structured filesystem/runtime error; Linux-only safe traversal in this increment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleError"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Structured filesystem/runtime error; Linux-only safe traversal in this increment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Structured filesystem/runtime error; Linux-only safe traversal in this increment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Structured filesystem/runtime error; Linux-only safe traversal in this increment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Structured filesystem/runtime error; Linux-only safe traversal in this increment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -2670,6 +3087,105 @@
             "items": {
               "$ref": "#/components/schemas/Interaction"
             }
+          }
+        }
+      },
+      "DirectoryRoots": {
+        "type": "object",
+        "required": [
+          "roots"
+        ],
+        "properties": {
+          "roots": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "name",
+                "path"
+              ],
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "path": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      "DirectoryListing": {
+        "type": "object",
+        "required": [
+          "path",
+          "parentPath",
+          "directories",
+          "nextCursor"
+        ],
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "parentPath": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "directories": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "name",
+                "path"
+              ],
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "path": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "DirectoryValidation": {
+        "type": "object",
+        "required": [
+          "path",
+          "valid",
+          "reason"
+        ],
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "valid": {
+            "type": "boolean"
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              null,
+              "not_found",
+              "not_directory",
+              "not_accessible",
+              "outside_allowed_roots"
+            ]
           }
         }
       }

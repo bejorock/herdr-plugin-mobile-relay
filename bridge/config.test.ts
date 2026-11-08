@@ -6,6 +6,7 @@ import { loadConfig } from "./config.ts";
 // process.env + homedir), so we drive it by mutating the environment and restoring it after.
 
 const KEYS = [
+  "HERDR_RELAY_BROWSE_ROOTS",
   "HERDR_RELAY_PORT",
   "HERDR_RELAY_EFFECTIVE_PORT",
   "HERDR_RELAY_HOST",
@@ -48,6 +49,14 @@ afterEach(() => {
 });
 
 describe("loadConfig", () => {
+  test("directory roots are explicit JSON configuration and invalid policies fail closed", () => {
+    expect(loadConfig().browseRoots).toEqual([]);
+    process.env.HERDR_RELAY_BROWSE_ROOTS = JSON.stringify([{ name: " Workspaces ", path: "/home/u/workspaces/" }]);
+    expect(loadConfig().browseRoots).toEqual([{ name: "Workspaces", path: "/home/u/workspaces" }]);
+    for (const value of ["not-json", "{}", '[{"name":"x","path":"relative"}]', '[{"name":"x","path":"/tmp/../etc"}]', '[{"name":"x","path":"/tmp"},{"name":"y","path":"/tmp/"}]']) {
+      process.env.HERDR_RELAY_BROWSE_ROOTS = value; expect(() => loadConfig()).toThrow();
+    }
+  });
   test("uses safe single-user defaults", () => {
     const cfg = loadConfig();
     expect(cfg.port).toBe(8787);

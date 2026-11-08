@@ -1,220 +1,60 @@
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 
 export const MAX_READ_LINES = 10_000;
-const DEFAULT_TRUSTED_USER_HEADER = "tailscale-user-login";
-const HTTP_HEADER_NAME = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
+export const NATIVE_CLIENT_HEADER = "x-herdr-client";
+export const NATIVE_CLIENT_VALUE = "herdr-mobile-v1";
 
-// All bridge configuration, resolved once at startup. Env-driven so the systemd unit and the
-// plugin launcher can configure it without code changes. Defaults are safe for a single-user,
-// tailnet-only deployment.
-
-/**
- * Read an integer env var, falling back to `fallback` (with one warning line) on anything invalid:
- * an empty/unset value, non-integer garbage (`parseInt("123abc")` used to sneak `123` through — a
- * strict regex rejects it), or a value outside the optional `[min, max]` bounds. Keeping bad config
- * from silently becoming a nonsense number (a negative poll interval, port 0) is the whole point.
- */
-function envInt(
-  name: string,
-  fallback: number,
-  opts: { min?: number; max?: number } = {},
-): number {
-  const raw = process.env[name];
-  if (raw === undefined || raw.trim() === "") return fallback;
-  const trimmed = raw.trim();
-  if (!/^[+-]?\d+$/.test(trimmed)) {
-    console.warn(`[config] ${name}="${raw}" is not an integer — using default ${fallback}`);
-    return fallback;
-  }
-  const n = Number(trimmed);
-  const { min, max } = opts;
-  if (!Number.isSafeInteger(n) || (min !== undefined && n < min) || (max !== undefined && n > max)) {
-    console.warn(`[config] ${name}=${n} is out of the allowed range — using default ${fallback}`);
-    return fallback;
-  }
-  return n;
-}
-
-function envList(name: string): string[] {
-  return (process.env[name] ?? "")
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
-}
-
-function trustedUserHeader(): string {
-  const raw = process.env.HERDR_RELAY_TRUSTED_USER_HEADER;
-  const value = raw?.trim().toLowerCase() ?? "";
-  if (!value) return DEFAULT_TRUSTED_USER_HEADER;
-  if (HTTP_HEADER_NAME.test(value)) return value;
-  console.warn(
-    `[config] HERDR_RELAY_TRUSTED_USER_HEADER=${JSON.stringify(raw)} is not a valid HTTP header name — using ${DEFAULT_TRUSTED_USER_HEADER}`,
-  );
-  return DEFAULT_TRUSTED_USER_HEADER;
-}
-
-function deviceHeader(): string {
-  const raw = process.env.HERDR_RELAY_DEVICE_HEADER;
-  const value = raw?.trim() ?? "";
-  if (!value || HTTP_HEADER_NAME.test(value)) return value;
-  const fallback = "x-herdr-invalid-device-header";
-  console.warn(
-    `[config] HERDR_RELAY_DEVICE_HEADER=${JSON.stringify(raw)} is not a valid HTTP header name — using fail-closed ${fallback}`,
-  );
+function envInt(name: string, fallback: number, min: number, max = 2_147_483_647): number {
+  const raw = process.env[name]?.trim();
+  if (!raw) return fallback;
+  const value = /^[+-]?\d+$/.test(raw) ? Number(raw) : NaN;
+  if (Number.isSafeInteger(value) && value >= min && value <= max) return value;
+  console.warn(`[config] Invalid ${name}; using ${fallback}`);
   return fallback;
 }
-
-export function isLoopbackBindHost(host: string): boolean {
-  // The launcher readiness probe and Tailscale shorthand both target IPv4 loopback.
-  return /^(localhost|127\.0\.0\.1)$/.test(host);
-}
-
-/**
- * Read a boolean env var. Empty/unset → `fallback`. `off`/`0`/`false`/`no` → false; `on`/`1`/`true`/
- * `yes` → true (case-insensitive); anything else falls back with a warning. Used for feature toggles
- * that default on, where a typo silently flipping the feature would be surprising.
- */
-function envBool(name: string, fallback: boolean): boolean {
-  const raw = process.env[name];
-  if (raw === undefined || raw.trim() === "") return fallback;
-  const v = raw.trim().toLowerCase();
-  if (["off", "0", "false", "no"].includes(v)) return false;
-  if (["on", "1", "true", "yes"].includes(v)) return true;
-  console.warn(`[config] ${name}="${raw}" is not a boolean — using default ${fallback}`);
+function boolean(name: string, fallback: boolean): boolean {
+  const value = process.env[name]?.trim().toLowerCase();
+  if (!value) return fallback;
+  if (["on", "true", "1", "yes"].includes(value)) return true;
+  if (["off", "false", "0", "no"].includes(value)) return false;
+  console.warn(`[config] Invalid ${name}; using ${fallback}`);
   return fallback;
 }
-
+function list(name: string): string[] { return (process.env[name] ?? "").split(",").map((value) => value.trim()).filter(Boolean); }
 export interface Config {
-  /** Path to Herdr's control socket. A non-Herdr-launched daemon must discover this itself. */
+  /** Herdr's existing control socket, not this daemon's HTTP socket. */
   socketPath: string;
-  /** TCP port the bridge listens on (loopback only). `tailscale serve` proxies to it. */
-  port: number;
-  /**
-   * Bind host. ALWAYS loopback by default — binding 0.0.0.0 would make the Tailscale identity
-   * check meaningless (see ARCHITECTURE.md §6). Override only if you know exactly why.
-   */
-  host: string;
-  /** Poll cadence for the state engine, ms. Also the fast fallback cadence when the event stream is down. */
-  pollMs: number;
-  /**
-   * Relaxed safety-net poll cadence, ms, used while the events.subscribe stream is healthy. Events
-   * poke immediate re-polls, so this interval only backstops a missed poke — a miss costs at most
-   * one of these, never correctness. Falls back to {@link pollMs} the moment the stream drops.
-   */
-  pollIdleMs: number;
-  /** How many lines of scrollback to pull for the agent detail view. */
-  readLines: number;
-  /** Key sequence sent to submit a reply after the text (agent-dependent; see HERDR_API.md). */
-  submitKeys: string[];
-  /**
-   * Legacy single-user Tailscale identity gate. Kept for backward-compatible deployments; its
-   * non-empty value is combined with {@link trustedUsers}. Empty alone does not enable remote access.
-   */
-  trustedUser: string;
-  /** Additional exact Tailscale login names permitted remotely (comma-separated configuration). */
-  trustedUsers: string[];
-  /**
-   * Explicit opt-in to accept every request carrying a non-empty proxy-injected identity header.
-   * This is still private-tailnet/proxy access, never anonymous/public access, and must not be used
-   * with Tailscale Funnel (which does not inject identity headers).
-   */
-  allowAnyTrustedUser: boolean;
-  /** Header carrying the trusted proxy identity; defaults to Tailscale-User-Login. */
-  trustedUserHeader: string;
-  /**
-   * Per-device authorisation. Name of a request header carrying an opaque device identifier,
-   * injected by a trusted upstream reverse proxy. Remote authorization also requires the matching
-   * {@link trustedUser} identity header; the device value alone is never trusted. Empty = off, but
-   * remote access still requires the trusted-user identity above.
-   * When set, devices whose header value isn't in {@link deviceAllowlist} are read-only. See
-   * `deviceAuth()` in server.ts for the full matrix. The header is trusted only because the bridge
-   * binds loopback behind the proxy — a direct client can't set it (same trust basis as trustedUser).
-   */
-  deviceHeader: string;
-  /**
-   * Device identifiers permitted to perform sensitive actions (typing into agent terminals,
-   * structural creates). Everything else carrying the header is read-only. To revoke a device,
-   * drop its value from this list and restart. Ignored when {@link deviceHeader} is empty.
-   */
-  deviceAllowlist: string[];
-  /** Extra allowed request origins beyond localhost (e.g. your MagicDNS https origin). */
-  allowedOrigins: string[];
-  /**
-   * Host-header allowlist (`host` or `host:port` values). Any non-loopback request must match one
-   * of these or a host parsed from {@link allowedOrigins}. Empty therefore means loopback-only.
-   */
-  publicHosts: string[];
-  /** Public proxy scheme used for same-origin checks. HTTPS by default; HTTP only in serve HTTP mode. */
-  publicScheme: "http" | "https";
-  /** Owner-approved local directory picker roots; absent/empty disables filesystem browsing. */
-  browseRoots?: Array<{ name: string; path: string }>;
-  /** Private runtime state and uploads. */
+  /** Owner-private HTTP/SSE/WebSocket socket. No TCP listener is opened. */
+  relaySocketPath: string;
   stateDir: string;
-  /**
-   * Multi-session support. When on (default), the bridge fronts every running herdr session it
-   * discovers under the config root, not just {@link socketPath}, and the UI gains a session
-   * switcher. Off (`off`/`0`/`false`) pins the bridge to the primary session only — no discovery,
-   * exactly the pre-feature behaviour. Client-supplied session names only ever select an
-   * already-discovered session; they never build a filesystem path.
-   */
+  pollMs: number;
+  pollIdleMs: number;
+  readLines: number;
+  submitKeys: string[];
   multiSession: boolean;
+  /** Optional exact browser origins; default none. SSH itself is managed by the owner/client. */
+  allowedOrigins: string[];
 }
-
-function browseRoots(): Array<{ name: string; path: string }> {
-  const raw = process.env.HERDR_RELAY_BROWSE_ROOTS;
-  if (!raw?.trim()) return [];
-  let roots: unknown;
-  try { roots = JSON.parse(raw); } catch { throw new Error("HERDR_RELAY_BROWSE_ROOTS must be a JSON root array"); }
-  if (!Array.isArray(roots) || roots.length > 16 || roots.some((root) => !root || typeof root !== "object" ||
-      typeof root.name !== "string" || !root.name.trim() || root.name.length > 128 || /[\x00-\x1f\x7f]/.test(root.name) ||
-      typeof root.path !== "string" || !root.path.startsWith("/") || root.path.length > 4096 || /[\x00-\x1f\x7f]/.test(root.path) || root.path.split("/").some((s: string) => s === "." || s === ".."))) {
-    throw new Error("HERDR_RELAY_BROWSE_ROOTS contains invalid roots");
-  }
-  const result = roots.map((root) => ({ name: root.name.trim(), path: root.path.replace(/\/+$/, "") || "/" }));
-  if (new Set(result.map((root) => root.path)).size !== result.length) throw new Error("HERDR_RELAY_BROWSE_ROOTS contains duplicate roots");
-  return result;
-}
-
 export function loadConfig(): Config {
-  const stateDir =
-    process.env.HERDR_PLUGIN_STATE_DIR ??
-    process.env.HERDR_RELAY_STATE_DIR ??
-    join(homedir(), ".local", "state", "rad-herdr-mobile-relay");
-
-  const submitKeys = envList("HERDR_RELAY_SUBMIT_KEYS");
-  const requestedHost = (process.env.HERDR_RELAY_HOST ?? "127.0.0.1").trim();
-  const host = isLoopbackBindHost(requestedHost) ? requestedHost : "127.0.0.1";
-  if (host !== requestedHost) {
-    console.warn(`[config] HERDR_RELAY_HOST=${JSON.stringify(requestedHost)} is not loopback — using 127.0.0.1`);
+  const stateDir = process.env.HERDR_PLUGIN_STATE_DIR ?? process.env.HERDR_RELAY_STATE_DIR ?? join(homedir(), ".local", "state", "rad-herdr-mobile-relay");
+  const relaySocketPath = process.env.HERDR_RELAY_SOCKET ?? join(stateDir, "relay.sock");
+  if (!isAbsolute(stateDir) || !isAbsolute(relaySocketPath) || /[\x00-\x1f\x7f]/.test(stateDir + relaySocketPath)) throw new Error("Relay state/socket paths must be absolute without control characters");
+  // Conservative cross-platform sockaddr_un limit, leaving room for the terminating NUL.
+  if (Buffer.byteLength(relaySocketPath) > 100) throw new Error("HERDR_RELAY_SOCKET exceeds 100 UTF-8 bytes; choose a shorter private directory");
+  const allowedOrigins = list("HERDR_RELAY_ALLOWED_ORIGINS");
+  for (const origin of allowedOrigins) {
+    const parsed = new URL(origin);
+    if (!["http:", "https:"].includes(parsed.protocol) || parsed.origin !== origin || parsed.username || parsed.password) throw new Error("HERDR_RELAY_ALLOWED_ORIGINS requires exact HTTP(S) origins");
   }
-
-  const port = process.env.HERDR_RELAY_EFFECTIVE_PORT !== undefined
-    ? envInt("HERDR_RELAY_EFFECTIVE_PORT", 8787, { min: 1, max: 65535 })
-    : envInt("HERDR_RELAY_PORT", 8787, { min: 1, max: 65535 });
-  const publicHosts = process.env.HERDR_RELAY_EFFECTIVE_PUBLIC_HOSTS !== undefined
-    ? envList("HERDR_RELAY_EFFECTIVE_PUBLIC_HOSTS")
-    : envList("HERDR_RELAY_PUBLIC_HOSTS");
-
+  const submitKeys = list("HERDR_RELAY_SUBMIT_KEYS");
   return {
     socketPath: process.env.HERDR_SOCKET_PATH ?? join(homedir(), ".config", "herdr", "herdr.sock"),
-    port,
-    host,
-    pollMs: envInt("HERDR_RELAY_POLL_MS", 1500, { min: 250, max: 2_147_483_647 }),
-    pollIdleMs: envInt("HERDR_RELAY_POLL_IDLE_MS", 12_000, { min: 1000, max: 2_147_483_647 }),
-    readLines: envInt("HERDR_RELAY_READ_LINES", 200, { min: 1, max: MAX_READ_LINES }),
+    relaySocketPath, stateDir, allowedOrigins,
+    pollMs: envInt("HERDR_RELAY_POLL_MS", 1500, 250),
+    pollIdleMs: envInt("HERDR_RELAY_POLL_IDLE_MS", 12_000, 1000),
+    readLines: envInt("HERDR_RELAY_READ_LINES", 200, 1, MAX_READ_LINES),
     submitKeys: submitKeys.length ? submitKeys : ["Enter"],
-    trustedUser: process.env.HERDR_RELAY_TRUSTED_USER?.trim() ?? "",
-    trustedUsers: [...new Set(envList("HERDR_RELAY_TRUSTED_USERS"))],
-    allowAnyTrustedUser: envBool("HERDR_RELAY_ALLOW_ANY_TAILNET_USER", false),
-    trustedUserHeader: trustedUserHeader(),
-    deviceHeader: deviceHeader(),
-    deviceAllowlist: envList("HERDR_RELAY_DEVICE_ALLOWLIST"),
-    allowedOrigins: envList("HERDR_RELAY_ALLOWED_ORIGINS"),
-    publicHosts,
-    publicScheme: process.env.HERDR_RELAY_SERVE_MODE?.trim().toLowerCase() === "http" ? "http" : "https",
-    stateDir,
-    browseRoots: browseRoots(),
-    multiSession: envBool("HERDR_RELAY_MULTI_SESSION", true),
+    multiSession: boolean("HERDR_RELAY_MULTI_SESSION", true),
   };
 }

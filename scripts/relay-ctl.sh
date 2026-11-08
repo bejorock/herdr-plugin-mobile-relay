@@ -15,7 +15,7 @@ PLUGIN_ID="rad.herdr-mobile-relay"
 # Herdr injects HERDR_PLUGIN_CONFIG_DIR when it runs our actions, but a direct `relay-ctl.sh` call
 # doesn't get it — so we ask Herdr for the canonical path (`herdr plugin config-dir`, plain text).
 # Without this, the two entry points read DIFFERENT .env files (Herdr's dir vs a ~/.config/rad-herdr-mobile-relay
-# fallback), so a setting like HERDR_RELAY_SERVE_MODE applied one way and was silently ignored the other.
+# fallback). Both direct and plugin invocations must use the same configuration.
 # Order: injected env → Herdr CLI → Herdr's conventional path (if it has a .env) → ~/.config/rad-herdr-mobile-relay.
 resolve_config_dir() {
   if [ -n "${HERDR_PLUGIN_CONFIG_DIR:-}" ]; then echo "$HERDR_PLUGIN_CONFIG_DIR"; return; fi
@@ -36,7 +36,7 @@ chmod 700 "$CONFIG_DIR"
 if [ -f "${CONFIG_DIR}/.env" ]; then chmod 600 "${CONFIG_DIR}/.env"; fi
 
 # First launch establishes one durable state directory; later direct/plugin invocations reuse it so
-# subscriptions and preferences cannot jump between Herdr-injected and standalone defaults.
+# conversation bindings and hook sockets cannot jump between injected and standalone defaults.
 STATE_DIR_FILE="${CONFIG_DIR}/state-dir"
 if [ -f "$STATE_DIR_FILE" ]; then
   IFS= read -r PLUGIN_STATE_DIR < "$STATE_DIR_FILE" || PLUGIN_STATE_DIR=""
@@ -72,34 +72,9 @@ load_dotenv() {
 }
 load_dotenv "${CONFIG_DIR}/.env"
 
-normalize_port() {
-  local raw="${1:-}" fallback="${2:-8787}" normalized
-  raw="$(printf '%s' "$raw" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
-  case "$raw" in +*) raw="${raw#+}" ;; esac
-  case "$raw" in
-    ''|*[!0-9]*) echo "$fallback"; return ;;
-  esac
-  normalized="$(printf '%s\n' "$raw" | sed 's/^0*//')"
-  [ -n "$normalized" ] || normalized="0"
-  if [ "${#normalized}" -le 5 ] && [ "$normalized" -ge 1 ] && [ "$normalized" -le 65535 ]; then
-    echo "$normalized"
-  else
-    echo "$fallback"
-  fi
-}
-
-# Keep launcher, readiness probes, systemd, and Tailscale publishing on the same validated port as
-# the bridge. Malformed and out-of-range environment values use the documented 8787 fallback.
-PORT="$(normalize_port "${HERDR_RELAY_PORT:-8787}" 8787)"
-export HERDR_RELAY_PORT="$PORT"
 SOCKET="${HERDR_SOCKET_PATH:-${HOME}/.config/herdr/herdr.sock}"
-# How tailscale serve exposes the bridge: "https" (default, needs a cert from the control
-# server) or "http" (plain HTTP over the tailnet — use this on Headscale / .internal domains).
-SERVE_MODE_RAW="$(printf '%s' "${HERDR_RELAY_SERVE_MODE:-https}" | tr '[:upper:]' '[:lower:]')"
-if [ "$SERVE_MODE_RAW" = "http" ]; then SERVE_MODE="http"; else SERVE_MODE="https"; fi
-# Use a dedicated public listener by default so Herdr Mobile Relay does not replace an existing :443
-# Serve mapping. Set 443 explicitly when this app should own the root MagicDNS URL.
-SERVE_PORT="$(normalize_port "${HERDR_RELAY_SERVE_PORT:-$PORT}" "$PORT")"
+RELAY_SOCKET="${HERDR_RELAY_SOCKET:-${PLUGIN_STATE_DIR}/relay.sock}"
+export HERDR_RELAY_SOCKET="$RELAY_SOCKET"
 # Herdr plugin actions can run with a minimal PATH that omits Bun's standard user install
 # directory. Prefer PATH but fall back to Bun's documented per-user location.
 BUN="$(command -v bun || true)"
@@ -107,10 +82,6 @@ if [ -z "$BUN" ] && [ -x "${HOME}/.bun/bin/bun" ]; then BUN="${HOME}/.bun/bin/bu
 # `bun run` scripts may invoke `bunx` or `bun` by name. Keep the discovered executable's
 # directory on PATH for those child shells too, including minimal Herdr plugin action environments.
 if [ -n "$BUN" ]; then export PATH="$(dirname "$BUN"):${PATH}"; fi
-TAILSCALE="$(command -v tailscale || true)"
-if [ -z "$TAILSCALE" ] && [ -x "/Applications/Tailscale.app/Contents/MacOS/Tailscale" ]; then
-  TAILSCALE="/Applications/Tailscale.app/Contents/MacOS/Tailscale"
-fi
 have_systemd() { command -v systemctl >/dev/null && systemctl --user show-environment >/dev/null 2>&1; }
 have_launchd() { [ "$(uname -s)" = "Darwin" ] && command -v launchctl >/dev/null; }
 launchd_domain() { printf 'gui/%s' "$(id -u)"; }
@@ -178,115 +149,33 @@ cmd_build() {
   fi
 }
 
-self_dnsname() {
-  [ -n "$TAILSCALE" ] && [ -n "$BUN" ] || return 0
-  "$TAILSCALE" status --json 2>/dev/null | "$BUN" -e \
-    "let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{try{process.stdout.write(JSON.parse(d).Self.DNSName.replace(/\.$/,''))}catch{}})"
-}
-
-bridge_url() {
-  local name; name="$(self_dnsname)"
-  if [ -z "$name" ]; then echo "http://127.0.0.1:${PORT} (Tailscale name unavailable)"; return; fi
-  if [ "$SERVE_MODE" = "http" ]; then
-    if [ "$SERVE_PORT" = "80" ]; then echo "http://${name}"; else echo "http://${name}:${SERVE_PORT}"; fi
-  else
-    if [ "$SERVE_PORT" = "443" ]; then echo "https://${name}"; else echo "https://${name}:${SERVE_PORT}"; fi
-  fi
-}
-
-resolved_public_hosts() {
-  if [ -n "${HERDR_RELAY_PUBLIC_HOSTS:-}" ]; then echo "$HERDR_RELAY_PUBLIC_HOSTS"; return; fi
-  local name; name="$(self_dnsname)"
-  if [ -z "$name" ]; then return; fi
-  if { [ "$SERVE_MODE" = "http" ] && [ "$SERVE_PORT" = "80" ]; } ||
-     { [ "$SERVE_MODE" != "http" ] && [ "$SERVE_PORT" = "443" ]; }; then
-    echo "$name"
-  else
-    echo "${name}:${SERVE_PORT}"
-  fi
-}
-
-# The version Herdr Mobile Relay is actually serving, read from the manifest (canonical version).
-relay_version() {
-  local v
-  v="$(sed -n 's/^version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "${PLUGIN_ROOT}/herdr-plugin.toml" | head -1)"
-  [ -n "$v" ] && echo "$v" || echo "unknown"
-}
-
-bridge_probe_once() {
-  [ -n "$BUN" ] || return 1
-  # Stock macOS Bash 3.2 rejects fractional `read -t` values, so use the Bun runtime already
-  # required to launch the bridge. Fetch resolves at the response headers; the abort keeps a
-  # foreign/stalled listener from stretching the outer ~5-second readiness window.
-  "$BUN" -e '
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 1_000);
-    try {
-      const response = await fetch(`http://127.0.0.1:${process.argv[1]}/api/config`, {
-        signal: controller.signal,
-      });
-      process.exit(
-        response.status === 200 && response.headers.get("x-rad-herdr-mobile-relay") === "rad-herdr-mobile-relay-v1"
-          ? 0
-          : 1,
-      );
-    } catch {
-      process.exit(1);
-    } finally {
-      clearTimeout(timer);
-    }
-  ' "$PORT"
-}
-
-# True only once this bridge answers a bridge-specific HTTP probe, not merely when any process owns
-# the port. Poll for up to ~5s to cover a just-launched service still binding.
+relay_version() { awk -F'"' '/^version = / {print $2; exit}' "${PLUGIN_ROOT}/herdr-plugin.toml"; }
 bridge_ready() {
+  [ -n "$BUN" ] || return 1
   local i
-  for i in $(seq 1 25); do
-    bridge_probe_once && return 0
+  for i in $(seq 1 30); do
+    if "$BUN" -e 'const response = await fetch("http://localhost/api/config", {unix: process.argv[1], signal: AbortSignal.timeout(1000)}); if (!response.ok) process.exit(1);' "$RELAY_SOCKET" >/dev/null 2>&1; then return 0; fi
     sleep 0.2
   done
   return 1
 }
-
-# One scannable status summary — readiness, how it is supervised, and both URLs. Shared by
-# `start` (post-launch confirmation) and `status` (on demand) so the two always agree.
 print_status_banner() {
-  local svc
-  if have_systemd; then
-    svc="systemd --user (${UNIT}) · $(systemctl --user is-active "$UNIT" 2>/dev/null || echo unknown)"
-  elif have_launchd && launchctl print "$(launchd_domain)/${LAUNCHD_LABEL}" >/dev/null 2>&1; then
-    svc="launchd user agent (${LAUNCHD_LABEL}) · loaded"
-  elif [ -f "${CONFIG_DIR}/rad-herdr-mobile-relay.pid" ]; then
-    svc="pid $(cat "${CONFIG_DIR}/rad-herdr-mobile-relay.pid" 2>/dev/null) (no systemd)"
-  else
-    svc="not supervised"
-  fi
-  local ver; ver="$(relay_version)"
-  echo
-  if bridge_ready; then
-    echo "  ✓ Herdr Mobile Relay is running  ·  v${ver}"
-  else
-    echo "  ⚠ Herdr Mobile Relay isn't answering on :${PORT} yet (v${ver}) — check 'relay-ctl.sh logs'"
-  fi
-  echo "    service   ${svc}"
-  echo "    local     http://127.0.0.1:${PORT}"
-  echo "    tailnet   $(bridge_url)"
-  echo
+  printf 'Herdr Relay %s\n  HTTP socket: %s\n  Herdr socket: %s\n' "$(relay_version)" "$RELAY_SOCKET" "$SOCKET"
+  if bridge_ready; then echo "  ready: yes (owner socket; connect through SSH)"; else echo "  ready: no"; fi
 }
 
 write_launchd_agent() {
   [ -n "$BUN" ] || { echo "error: bun not found on PATH" >&2; exit 1; }
   mkdir -p "$(dirname "$LAUNCHD_FILE")" "$CONFIG_DIR"
   local root_escaped wrapper_escaped bun_escaped socket_escaped config_escaped state_escaped
-  local hosts_escaped log_escaped
+  local relay_escaped log_escaped
   root_escaped="$(plist_escape_value "$PLUGIN_ROOT")"
   wrapper_escaped="$(plist_escape_value "${PLUGIN_ROOT}/scripts/launch-bridge.sh")"
   bun_escaped="$(plist_escape_value "$BUN")"
   socket_escaped="$(plist_escape_value "$SOCKET")"
   config_escaped="$(plist_escape_value "$CONFIG_DIR")"
   state_escaped="$(plist_escape_value "$PLUGIN_STATE_DIR")"
-  hosts_escaped="$(plist_escape_value "$(resolved_public_hosts)")"
+  relay_escaped="$(plist_escape_value "$RELAY_SOCKET")"
   log_escaped="$(plist_escape_value "${CONFIG_DIR}/rad-herdr-mobile-relay.log")"
   cat > "$LAUNCHD_FILE" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -301,8 +190,7 @@ write_launchd_agent() {
   <dict>
     <key>HERDR_RELAY_LAUNCH_BUN</key><string>${bun_escaped}</string>
     <key>HERDR_RELAY_LAUNCH_SOCKET_PATH</key><string>${socket_escaped}</string>
-    <key>HERDR_RELAY_EFFECTIVE_PORT</key><string>${PORT}</string>
-    <key>HERDR_RELAY_EFFECTIVE_PUBLIC_HOSTS</key><string>${hosts_escaped}</string>
+    <key>HERDR_RELAY_SOCKET</key><string>${relay_escaped}</string>
     <key>HERDR_PLUGIN_CONFIG_DIR</key><string>${config_escaped}</string>
     <key>HERDR_PLUGIN_STATE_DIR</key><string>${state_escaped}</string>
   </dict>
@@ -320,9 +208,8 @@ EOF
 write_unit() {
   [ -n "$BUN" ] || { echo "error: bun not found on PATH" >&2; exit 1; }
   mkdir -p "$(dirname "$UNIT_FILE")" "$CONFIG_DIR"
-  local public_hosts public_hosts_escaped bun_escaped root_escaped socket_escaped config_escaped state_environment=""
-  public_hosts="$(resolved_public_hosts)"
-  public_hosts_escaped="$(systemd_escape_value "$public_hosts")"
+  local bun_escaped root_escaped socket_escaped config_escaped relay_escaped state_environment=""
+  relay_escaped="$(systemd_escape_value "$RELAY_SOCKET")"
   bun_escaped="$(systemd_escape_value "$BUN")"
   root_escaped="$(systemd_escape_value "$PLUGIN_ROOT")"
   socket_escaped="$(systemd_escape_value "$SOCKET")"
@@ -343,16 +230,12 @@ WorkingDirectory=${root_escaped}
 ExecStart=${bun_escaped} run ${root_escaped}/bridge/index.ts
 Restart=on-failure
 RestartSec=5
-# Hardening: the bridge is remote shell access, so deny privilege escalation and give it a private
-# /tmp. ProtectSystem is intentionally NOT set — the only write path is the env-driven state dir,
-# which Herdr may inject to an arbitrary location, so it can't be enumerated in a static ReadWritePaths.
+# SSH must see the owner's socket, including explicit /tmp overrides; no PrivateTmp namespace.
+# Restrict new state/socket files and deny privilege escalation.
 NoNewPrivileges=yes
-PrivateTmp=yes
+UMask=0077
 Environment="HERDR_SOCKET_PATH=${socket_escaped}"
-Environment=HERDR_RELAY_PORT=${PORT}
-Environment=HERDR_RELAY_EFFECTIVE_PORT=${PORT}
-Environment="HERDR_RELAY_PUBLIC_HOSTS=${public_hosts_escaped}"
-Environment="HERDR_RELAY_EFFECTIVE_PUBLIC_HOSTS=${public_hosts_escaped}"
+Environment="HERDR_RELAY_SOCKET=${relay_escaped}"
 Environment="HERDR_PLUGIN_CONFIG_DIR=${config_escaped}"
 ${state_environment}
 EnvironmentFile=-${config_escaped}/.env
@@ -388,7 +271,7 @@ cmd_start() {
         exit 1
       fi
       rm -f "$pidfile"
-      HERDR_SOCKET_PATH="$SOCKET" HERDR_RELAY_PORT="$PORT" HERDR_RELAY_PUBLIC_HOSTS="$(resolved_public_hosts)" HERDR_PLUGIN_CONFIG_DIR="$CONFIG_DIR" \
+      HERDR_SOCKET_PATH="$SOCKET" HERDR_RELAY_SOCKET="$RELAY_SOCKET" HERDR_PLUGIN_CONFIG_DIR="$CONFIG_DIR" \
         nohup "$BUN" run "${PLUGIN_ROOT}/bridge/index.ts" >>"${CONFIG_DIR}/rad-herdr-mobile-relay.log" 2>&1 &
       local new_pid=$!
       sleep 0.2
@@ -401,10 +284,9 @@ cmd_start() {
     fi
   fi
   if ! bridge_ready; then
-    echo "error: Herdr Mobile Relay did not pass its HTTP readiness probe; refusing to publish :${PORT} through Tailscale" >&2
+    echo "error: relay did not pass its Unix socket readiness probe" >&2
     return 1
   fi
-  cmd_serve
   print_status_banner
 }
 
@@ -446,13 +328,12 @@ cmd_stop() {
 cmd_restart() { cmd_stop; cmd_start; }
 
 # Tear the service down completely (the inverse of `start`): stop + disable it, remove the
-# systemd/launchd user service, remove Herdr Mobile Relay's tailscale serve mapping, and drop the pidfile. Deliberately leaves your
+# systemd/launchd user service and pidfile. Deliberately leaves your
 # config (${CONFIG_DIR}/.env) and the on-disk checkout in place — `uninstall` removes only what
 # `start` created. To remove the plugin registration too, run `herdr plugin uninstall rad.herdr-mobile-relay`
 # (or, for a linked clone, just delete the checkout).
 cmd_uninstall() {
   cmd_stop
-  cmd_unserve
   if have_systemd; then
     rm -f "$UNIT_FILE"
     systemctl --user daemon-reload 2>/dev/null || true
@@ -460,7 +341,7 @@ cmd_uninstall() {
   fi
   if have_launchd; then rm -f "$LAUNCHD_FILE"; fi
   rm -f "${CONFIG_DIR}/rad-herdr-mobile-relay.pid"
-  echo "✓ uninstalled: service stopped & disabled, service definition removed, Herdr Mobile Relay's tailscale serve mapping removed"
+  echo "✓ uninstalled: service stopped & disabled, service definition removed (no network publishing configured)"
   echo "  kept: ${CONFIG_DIR}/.env and the checkout — delete those to remove every trace"
 }
 
@@ -528,313 +409,26 @@ cmd_apply_update() {
   echo "✓ update complete"
 }
 
-SERVE_LISTENER_FILE="${CONFIG_DIR}/serve-listener"
-SERVE_EXTRA_LISTENER_FILE="${CONFIG_DIR}/serve-listener-extra"
 
-# Track the exact listener recorded after the last successful `serve`. The record is deliberately
-# separate from .env: users commonly change mode/port before restart or uninstall, and the new config
-# can no longer identify the old listener. Older installs without a record fall back to current config.
-remove_serve_listener() {
-  local mode="${1:-}" port="${2:-}"
-  case "$mode" in
-    http|https) ;;
-    *) return 1 ;;
-  esac
-  case "$port" in
-    ''|*[!0-9]*) return 1 ;;
-  esac
-  "$TAILSCALE" serve "--${mode}=${port}" off >/dev/null 2>&1
-}
-
-serve_listener_matches() {
-  local mode="${1:-}" port="${2:-}" target="${3:-}" status_file="${CONFIG_DIR}/serve-status.json"
-  [ -n "$BUN" ] || return 2
-  if ! "$TAILSCALE" serve status --json > "$status_file" 2>/dev/null; then return 2; fi
-  SERVE_CHECK_MODE="$mode" SERVE_CHECK_PORT="$port" SERVE_CHECK_TARGET="$target" \
-    "$BUN" -e '
-      let raw="";
-      process.stdin.on("data", c => raw += c).on("end", () => {
-        try {
-          const data = JSON.parse(raw);
-          const port = process.env.SERVE_CHECK_PORT;
-          const target = process.env.SERVE_CHECK_TARGET;
-          const mode = process.env.SERVE_CHECK_MODE;
-          const tcp = data.TCP?.[port];
-          if (tcp && ((mode === "https" && tcp.HTTPS !== true) || (mode === "http" && tcp.HTTPS === true))) process.exit(1);
-          const entries = Object.entries(data.Web ?? {}).filter(([key]) => key === port || key.endsWith(`:${port}`));
-          const containsTarget = value => {
-            if (typeof value === "string") {
-              try {
-                const url = new URL(value);
-                return (url.hostname === "127.0.0.1" || url.hostname === "localhost") && url.port === target;
-              } catch { return false; }
-            }
-            if (Array.isArray(value)) return value.some(containsTarget);
-            return value && typeof value === "object" && Object.values(value).some(containsTarget);
-          };
-          if (entries.length !== 1) process.exit(1);
-          const value = entries[0][1];
-          const handlers = value && typeof value === "object" && !Array.isArray(value) ? value.Handlers : null;
-          if (!handlers || typeof handlers !== "object" || Array.isArray(handlers)) process.exit(1);
-          const paths = Object.keys(handlers);
-          process.exit(paths.length === 1 && paths[0] === "/" && containsTarget(handlers["/"]) ? 0 : 1);
-        } catch { process.exit(2); }
-      });' < "$status_file"
-}
-
-# 0 = destination has no listener, 1 = occupied, 2 = status could not be verified.
-serve_listener_available() {
-  local port="${1:-}" status_file="${CONFIG_DIR}/serve-status.json"
-  [ -n "$BUN" ] || return 2
-  if ! "$TAILSCALE" serve status --json > "$status_file" 2>/dev/null; then return 2; fi
-  SERVE_CHECK_PORT="$port" "$BUN" -e '
-    let raw="";
-    process.stdin.on("data", c => raw += c).on("end", () => {
-      try {
-        const data = JSON.parse(raw);
-        const port = process.env.SERVE_CHECK_PORT;
-        const tcp = data.TCP?.[port];
-        const web = Object.keys(data.Web ?? {}).some(key => key === port || key.endsWith(`:${port}`));
-        process.exit(tcp || web ? 1 : 0);
-      } catch { process.exit(2); }
-    });' < "$status_file"
-}
-
-# 0 = removed, 3 = record no longer owns this listener, 1 = verification/removal failure.
-remove_owned_listener() {
-  local mode="${1:-}" port="${2:-}" target="${3:-}" match_status=0
-  serve_listener_matches "$mode" "$port" "$target" || match_status=$?
-  if [ "$match_status" = "1" ]; then return 3; fi
-  [ "$match_status" = "0" ] || return 1
-  remove_serve_listener "$mode" "$port"
-}
-
-remove_listener_record() {
-  local record_file="${1:-}" mode="" port="" target=""
-  [ -f "$record_file" ] || return 0
-  IFS=' ' read -r mode port target < "$record_file" || true
-  local removal_status=0
-  remove_owned_listener "$mode" "$port" "$target" || removal_status=$?
-  if [ "$removal_status" = "3" ]; then
-    echo "tailscale serve: recorded :${port} mapping is no longer owned by Herdr Mobile Relay; leaving it untouched"
-    rm -f "$record_file"
-    return 0
-  fi
-  if [ "$removal_status" = "0" ]; then
-    echo "tailscale serve: removed Herdr Mobile Relay's recorded ${mode} :${port} mapping"
-    rm -f "$record_file"
-    return 0
-  fi
-  echo "warning: could not remove recorded Herdr Mobile Relay serve mapping; keeping its record for retry" >&2
-  return 1
-}
-
-remove_recorded_serve_listener() {
-  local mode="" port="" target=""
-  if [ -f "$SERVE_LISTENER_FILE" ]; then
-    remove_listener_record "$SERVE_LISTENER_FILE"
-    return 1
-  fi
-  return 0
-}
-
-cmd_serve() {
-  [ -n "$TAILSCALE" ] || { echo "note: tailscale not found; bridge is on 127.0.0.1:${PORT} only"; return; }
-  local out="${CONFIG_DIR}/serve.out" old_mode="" old_port="" old_target="" installed=0 removed_for_swap=0 destination_owned=0
-  if [ -f "$SERVE_LISTENER_FILE" ]; then
-    IFS=' ' read -r old_mode old_port old_target < "$SERVE_LISTENER_FILE" || true
-  fi
-  # Recover any route whose install completed before the final ownership record was committed.
-  if [ -f "$SERVE_EXTRA_LISTENER_FILE" ] && ! remove_listener_record "$SERVE_EXTRA_LISTENER_FILE"; then
-    echo "error: an earlier pending Serve mapping could not be reconciled; refusing to lose ownership" >&2
-    return 1
-  fi
-  # A recorded same-mode/same-port route is still external mutable state: another application may
-  # have replaced its backend since our last successful install. Verify the record before issuing a
-  # `tailscale serve` command that would otherwise silently overwrite the current owner.
-  if [ "$old_mode" = "$SERVE_MODE" ] && [ "$old_port" = "$SERVE_PORT" ]; then
-    local reuse_status=0
-    serve_listener_matches "$old_mode" "$old_port" "$old_target" || reuse_status=$?
-    if [ "$reuse_status" = "1" ]; then
-      local stale_destination_status=0
-      serve_listener_available "$old_port" || stale_destination_status=$?
-      if [ "$stale_destination_status" = "0" ]; then
-        echo "tailscale serve: recorded :${old_port} listener disappeared; reinstalling"
-        rm -f "$SERVE_LISTENER_FILE"
-        reuse_status=0
-      elif [ "$stale_destination_status" = "1" ]; then
-        echo "error: recorded :${old_port} listener now belongs to another app; refusing replacement" >&2
-        rm -f "$SERVE_LISTENER_FILE"
-        return 1
-      else
-        echo "error: could not verify ownership of recorded :${old_port} listener; refusing replacement" >&2
-        return 1
-      fi
-    fi
-    if [ "$reuse_status" != "0" ]; then
-      echo "error: could not verify ownership of recorded :${old_port} listener; refusing replacement" >&2
-      return 1
-    fi
-    destination_owned=1
-  fi
-  # HTTP and HTTPS cannot share one TCP port. For that one transition, remove the old listener first,
-  # then restore its recorded backend if replacement fails. Other changes install before removal.
-  if [ "$old_port" = "$SERVE_PORT" ] && [ -n "$old_mode" ] && [ "$old_mode" != "$SERVE_MODE" ]; then
-    local swap_status=0
-    remove_owned_listener "$old_mode" "$old_port" "$old_target" || swap_status=$?
-    if [ "$swap_status" = "0" ]; then
-      removed_for_swap=1
-    elif [ "$swap_status" = "3" ]; then
-      local stale_swap_status=0
-      serve_listener_available "$old_port" || stale_swap_status=$?
-      if [ "$stale_swap_status" = "0" ]; then
-        echo "tailscale serve: recorded :${old_port} listener disappeared; installing ${SERVE_MODE}"
-        rm -f "$SERVE_LISTENER_FILE"
-        old_mode=""; old_port=""; old_target=""
-      elif [ "$stale_swap_status" = "1" ]; then
-        echo "error: recorded :${old_port} listener now belongs to another app; refusing protocol replacement" >&2
-        rm -f "$SERVE_LISTENER_FILE"
-        return 1
-      else
-        echo "error: could not verify ownership of recorded :${old_port} listener; refusing protocol replacement" >&2
-        return 1
-      fi
-    else
-      echo "error: existing :${old_port} listener is not verifiably owned by Herdr Mobile Relay; refusing protocol replacement" >&2
-      return 1
-    fi
-  fi
-  if [ "$destination_owned" != "1" ] && [ "$removed_for_swap" != "1" ]; then
-    local destination_status=0
-    serve_listener_available "$SERVE_PORT" || destination_status=$?
-    if [ "$destination_status" = "1" ]; then
-      echo "error: :${SERVE_PORT} already has an unowned Tailscale Serve listener; refusing replacement" >&2
-      return 1
-    fi
-    if [ "$destination_status" != "0" ]; then
-      echo "error: could not verify that :${SERVE_PORT} is available; refusing replacement" >&2
-      return 1
-    fi
-  fi
-  if [ "$SERVE_MODE" = "http" ]; then
-    printf '%s %s %s\n' "$SERVE_MODE" "$SERVE_PORT" "$PORT" > "$SERVE_EXTRA_LISTENER_FILE"
-    chmod 600 "$SERVE_EXTRA_LISTENER_FILE"
-    if "$TAILSCALE" serve --bg --http="$SERVE_PORT" "$PORT" >"$out" 2>&1; then
-      installed=1
-      echo "tailscale serve (http) → tailnet :${SERVE_PORT} -> 127.0.0.1:${PORT}"
-    else
-      echo "note: tailscale serve failed (try 'sudo tailscale set --operator=\$USER'):"; cat "$out"
-    fi
-  else
-    printf '%s %s %s\n' "$SERVE_MODE" "$SERVE_PORT" "$PORT" > "$SERVE_EXTRA_LISTENER_FILE"
-    chmod 600 "$SERVE_EXTRA_LISTENER_FILE"
-    if "$TAILSCALE" serve --bg --https="$SERVE_PORT" "$PORT" >"$out" 2>&1; then
-      installed=1
-      echo "tailscale serve (https) → tailnet :${SERVE_PORT} -> 127.0.0.1:${PORT}"
-    else
-      echo "note: tailscale serve (https) failed — on Headscale/.internal domains use HERDR_RELAY_SERVE_MODE=http:"; cat "$out"
-    fi
-  fi
-  if [ "$installed" != "1" ]; then
-    if [ "$removed_for_swap" = "1" ]; then
-      case "$old_target" in ''|*[!0-9]*) old_target="$PORT" ;; esac
-      if "$TAILSCALE" serve --bg "--${old_mode}=${old_port}" "$old_target" >/dev/null 2>&1; then
-        echo "tailscale serve: restored previous ${old_mode} :${old_port} mapping after replacement failed"
-      else
-        echo "warning: failed to restore previous Herdr Mobile Relay serve mapping" >&2
-      fi
-    fi
-    return 1
-  fi
-
-  # Except for the same-port protocol swap handled (and rolled back) above, the new route is live
-  # before the prior one is touched. Only a genuinely different old port needs follow-up removal.
-  if [ -n "$old_mode" ] && [ "$old_port" != "$SERVE_PORT" ]; then
-    local old_removal_status=0
-    remove_owned_listener "$old_mode" "$old_port" "$old_target" || old_removal_status=$?
-    if [ "$old_removal_status" = "0" ]; then
-      echo "tailscale serve: removed Herdr Mobile Relay's previous ${old_mode} :${old_port} mapping"
-    elif [ "$old_removal_status" = "3" ]; then
-      echo "tailscale serve: previous :${old_port} mapping now belongs to another app; leaving it untouched"
-    else
-      echo "warning: new serve mapping is live, but the previous mapping could not be removed; keeping its record for retry" >&2
-      # Roll the just-created route back so the ownership file remains complete. If even rollback
-      # fails, persist a second explicit record; uninstall will retry both and never infer ownership.
-      if ! remove_serve_listener "$SERVE_MODE" "$SERVE_PORT"; then
-        printf '%s %s %s\n' "$SERVE_MODE" "$SERVE_PORT" "$PORT" > "$SERVE_EXTRA_LISTENER_FILE"
-        chmod 600 "$SERVE_EXTRA_LISTENER_FILE"
-      else
-        rm -f "$SERVE_EXTRA_LISTENER_FILE"
-      fi
-      return 1
-    fi
-  fi
-  printf '%s %s %s\n' "$SERVE_MODE" "$SERVE_PORT" "$PORT" > "$SERVE_LISTENER_FILE"
-  chmod 600 "$SERVE_LISTENER_FILE"
-  rm -f "$SERVE_EXTRA_LISTENER_FILE"
-}
-
-# Remove ONLY Herdr Mobile Relay's tailscale serve mapping — the inverse of cmd_serve, NOT a blanket
-# `tailscale serve reset` (which would wipe every unrelated mapping on the host). We turn off
-# exactly the listener cmd_serve recorded after its last successful setup. Best-effort teardown stays
-# idempotent when the mapping is already gone.
-cmd_unserve() {
-  [ -n "$TAILSCALE" ] || { echo "note: tailscale not found; no serve mapping to remove"; return; }
-  local removed=1
-  if [ ! -f "$SERVE_LISTENER_FILE" ] && [ ! -f "$SERVE_EXTRA_LISTENER_FILE" ]; then
-    # Legacy installs predate ownership records. Remove only when the current configured listener
-    # can still be verified as this bridge's exact root mapping; never infer ownership from a port.
-    local legacy_status=0
-    remove_owned_listener "$SERVE_MODE" "$SERVE_PORT" "$PORT" || legacy_status=$?
-    if [ "$legacy_status" = "0" ]; then
-      echo "tailscale serve: removed verified legacy ${SERVE_MODE} :${SERVE_PORT} mapping"
-    elif [ "$legacy_status" = "3" ]; then
-      echo "tailscale serve: no owned legacy mapping found; leaving current listener untouched"
-    else
-      removed=0
-    fi
-  else
-    remove_listener_record "$SERVE_LISTENER_FILE" || removed=0
-    remove_listener_record "$SERVE_EXTRA_LISTENER_FILE" || removed=0
-  fi
-  if [ "$removed" = "1" ]; then
-    echo "tailscale serve: Herdr Mobile Relay mapping removed"
-  else
-    echo "warning: one or more Herdr Mobile Relay serve mappings remain; retry 'unserve'" >&2
-    return 1
-  fi
-}
-
-cmd_status() {
-  print_status_banner
-  echo "  serve config:"
-  if [ -n "$TAILSCALE" ]; then "$TAILSCALE" serve status 2>/dev/null | sed 's/^/    /' || true; fi
-}
-
+cmd_status() { print_status_banner; }
 cmd_logs() {
-  if have_systemd; then journalctl --user -u "$UNIT" -n "${1:-50}" --no-pager
-  else tail -n "${1:-50}" "${CONFIG_DIR}/rad-herdr-mobile-relay.log" 2>/dev/null || echo "(no log)"; fi
+  if have_systemd; then journalctl --user -u "$UNIT" -n 80 --no-pager;
+  else tail -80 "${CONFIG_DIR}/rad-herdr-mobile-relay.log"; fi
 }
-
-cmd_version() { relay_version; }
-
 main() {
-  case "${1:-}" in
-    start)   cmd_start ;;
-    stop)    cmd_stop ;;
+  case "${1:-status}" in
+    start) cmd_start ;;
+    stop) cmd_stop ;;
     restart) cmd_restart ;;
     uninstall) cmd_uninstall ;;
-    update)  cmd_update ;;
-    _apply-update) cmd_apply_update ;;  # internal: second half of `update`, run post-pull
-    build)   cmd_build ;;
-    serve)   cmd_serve; echo "open: $(bridge_url)" ;;
-    unserve) cmd_unserve ;;
-    status)  cmd_status ;;
-    url)     bridge_url ;;
-    version) cmd_version ;;
-    logs)    cmd_logs "${2:-50}" ;;
-    *) echo "usage: relay-ctl.sh {start|stop|restart|uninstall|update|version|build|serve|unserve|status|url|logs}" >&2; return 2 ;;
+    update) cmd_update ;;
+    _apply-update) cmd_apply_update ;;
+    build) cmd_build ;;
+    status) cmd_status ;;
+    socket|url) printf '%s\n' "$RELAY_SOCKET" ;;
+    version) relay_version ;;
+    logs) cmd_logs ;;
+    *) echo "usage: relay-ctl.sh {start|stop|restart|uninstall|update|version|build|status|socket|logs}" >&2; return 2 ;;
   esac
 }
-
-if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then main "$@"; fi
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then main "$@"; fi

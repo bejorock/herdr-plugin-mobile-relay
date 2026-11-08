@@ -1,11 +1,12 @@
-# Lean baseline verification
+# Socket-only release verification
 
-- Preserve and push the previous implementation branch/tag before pruning.
-- Run `bun install`, `bun run typecheck`, `bun test ./bridge`, and `bash scripts/check-version.sh`.
-- Verify removed UI/ACP/push/preferences/update routes return 404.
-- Verify public snapshots omit native transcript references and application notification fields.
-- Check loopback-only binding, remote identity gates, device write policy and terminal-stream regression tests.
-- Do not claim native agent restore or replacement HTTP transcript/event coverage from unit tests: those public APIs are not part of this baseline.
-- Before deployment, migrate `.env` from `COLLIE_*` to `HERDR_RELAY_*`, remove only old relay-owned agent hook references, and preserve Herdr integrations/private data.
-- Keep `main`/running installation unchanged until the lean branch is reviewed. A linked checkout must not be restarted while it is being pruned.
-- Future release/deployment should pin an explicit reviewed ref. Do not use the updater as a deployment acceptance test.
+- Preserve prior refs; work on `lean-relay`, not an implicit production cutover.
+- Run `bun install`, `bun run typecheck`, `bun test ./bridge`, shell syntax checks and `bash scripts/check-version.sh`.
+- Verify no daemon TCP listener; Unix directory/socket modes, active ownership, stale recovery and cleanup.
+- Exercise HTTP, SSE and terminal WebSocket over Unix socket/SSH forwarding; test SFTP separately using the host subsystem.
+- Verify removed ACP/PWA/push/preferences/directory/generic file/upload routes return 404.
+- Preserve transcript privacy, native identity/callback checks, body limits and mutation retry safeguards.
+- Before deployment explicitly migrate old port/proxy/device/root configuration and adapter entries. Regenerate service files; keep socket visible to the SSH account (no PrivateTmp).
+- New tooling never modifies SSH or Tailscale configuration. Separately verify/remove only a former relay-owned Serve mapping if the owner wants it removed.
+- Native agents and transcripts are not deleted during migration. Do not claim new native lifecycle coverage from transport-only tests.
+- Verify Linux and macOS on their actual systems before cross-platform release acceptance; document unavailable evidence honestly.

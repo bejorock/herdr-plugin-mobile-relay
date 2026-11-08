@@ -2,11 +2,11 @@
 
 ## Active services
 
-One Bun process binds IPv4 loopback. It owns the HTTP routes and optional `/api/live` terminal WebSocket. Each discovered Herdr runtime has a socket client, a snapshot state engine and an event subscription. Events invalidate cached state; snapshots reconcile it. Client-provided runtime names are registry keys, never socket paths.
+One Bun process listens only on an owner-private Unix socket; SSH transports HTTP/SSE/WebSocket and SFTP handles generic files. See [SSH transport](SSH_TRANSPORT.md). It owns the HTTP routes and optional `/api/live` terminal WebSocket. Each discovered Herdr runtime has a socket client, a snapshot state engine and an event subscription. Events invalidate cached state; snapshots reconcile it. Client-provided runtime names are registry keys, never socket paths.
 
 Herdr remains responsible for terminals, workspace/tab/pane identity, lifecycle and reported agent status. The relay retains its current management routes rather than introducing a second conversation protocol. Not every Herdr socket operation is publicly exposed; extending that coverage is separate work.
 
-Security includes Host/Origin validation, proxy identity policies, optional device write allowlists, private filesystem storage, bounded bodies, mutation serialization/deduplication and write audit logs. Delivery-ambiguous errors are not safe to retry blindly.
+Security includes socket ownership/permissions and browser/tunnel request-shape checks, private filesystem storage, bounded bodies, mutation serialization/deduplication and write audit logs. Delivery-ambiguous errors are not safe to retry blindly.
 
 ## Separate data purposes
 
@@ -30,6 +30,6 @@ The old hook binding identifier remains internal and pane-scoped. HTTP lifecycle
 
 See [Lean Relay Revamp](LEAN_RELAY_REVAMP.md) for the agreed boundaries, injected Pi/Claude integration changes, nested-request strategy, implementation increments and acceptance criteria. It separates transcript delivery from live actionable events and leaves rendering/correlation policy to clients.
 
-HTTP transcripts, Herdr events and the first native interaction/adapter increment are implemented. Owner-configured Linux folder operations are implemented ([directory contract](HTTP_DIRECTORIES.md)); macOS folder support and discovery executable verification remain pending; public attach-existing is pending even though hook registration can privately attach a proven live conversation. Clients own rendering and whether to associate an event with a transcript tool call. Adapters must forward actual pending requests and route replies to the originating callback, not infer approvals from historical tool names. Nested workflow/subagent support requires explicit parent forwarding or an authenticated native adapter; it is not automatic.
+HTTP transcripts, Herdr events and the first native interaction/adapter increment are implemented. Generic directory/file operations moved to external SFTP; the old custom directory backend is removed. Discovery executable verification remains pending; public attach-existing is pending even though hook registration can privately attach a proven live conversation. Clients own rendering and whether to associate an event with a transcript tool call. Adapters must forward actual pending requests and route replies to the originating callback, not infer approvals from historical tool names. Nested workflow/subagent support requires explicit parent forwarding or an authenticated native adapter; it is not automatic.
 
 No PWA, browser push service, notification preferences/snooze, remote model probes, or ACP lifecycle dispatcher remains in the active process. Existing deployment/user data is not deleted during source cleanup.

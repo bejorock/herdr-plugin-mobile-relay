@@ -149,8 +149,6 @@ export type ActionResponse =
       deliveryAmbiguous?: boolean;
     };
 
-/** POST /api/pane/:id/upload — image saved to a host file; `path` is the absolute path to ref. */
-export type UploadResponse = { ok: true; path: string } | { ok: false; error: string };
 
 /** One workspace-relative entry returned by the read-only file browser. */
 export interface WorkspaceFileEntry {

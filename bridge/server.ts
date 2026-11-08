@@ -1,23 +1,19 @@
 import { homedir } from "node:os";
-import { join } from "node:path";
 import type { AuditLog } from "./audit.ts";
 import { ConversationService, ConversationStore, LifecycleError, REQUEST_ID } from "./agents/conversations.ts";
 import { TranscriptService } from "./agents/transcripts.ts";
 import { InteractionService } from "./agents/interaction-service.ts";
-import { DirectoryService } from "./directories.ts";
 import { AgentHookServer } from "./agents/hook.ts";
 import { HerdrEventHub, HttpStreams } from "./http-events.ts";
-import { isLoopbackBindHost, MAX_READ_LINES, type Config } from "./config.ts";
+import { MAX_READ_LINES, NATIVE_CLIENT_HEADER, NATIVE_CLIENT_VALUE, type Config } from "./config.ts";
+import { prepareHttpSocket } from "./http-socket.ts";
 import { HerdrRequestError, type HerdrClient, type PaneRead } from "./herdr-client.ts";
 import { computeEtag, gzipJsonResponse, notModified } from "./http-cache.ts";
 import type { LiveUpdateHub } from "./live-updates.ts";
-import { ensurePrivateDirectory, writePrivateFile } from "./private-fs.ts";
 import type { SessionRegistry } from "./sessions.ts";
 import { observeTerminalFrames } from "./terminal-observer.ts";
 import type { StateEngine } from "./state-engine.ts";
 import {
-  listWorkspaceFiles,
-  readWorkspaceFile,
   readWorkspaceGitDiff,
   readWorkspaceGitStatus,
   resolveWorkspaceRoot,
@@ -31,28 +27,11 @@ import type {
   DeviceAuth,
   PaneReadResponse,
   SnapshotResponse,
-  UploadResponse,
-  WorkspaceFilesResponse,
   WorktreeCreateResponse,
 } from "./types.ts";
 
-// Image upload limits. Herdr's socket only carries text/keys, so we can't paste an image into the
-// terminal — instead we save it to a host file and the client references its path in the message
-// (the agent reads images by path). See uploadPane().
-const MAX_UPLOAD_BYTES = 10 * 1024 * 1024; // 10 MB
-// Multipart wraps the file in a boundary + part headers, so a legitimately-sized image arrives a
-// little over MAX_UPLOAD_BYTES on the wire. Allow a small slack for the Content-Length pre-check.
-const MAX_UPLOAD_OVERHEAD = 64 * 1024; // 64 KB
-// Hard cap the runtime enforces on ANY request body (Bun.serve maxRequestBodySize). Bigger than the
-// upload cap + overhead so the handler's own 413 fires first for honest clients; this cuts off a
-// chunked or lying client that never sends an accurate Content-Length.
-const MAX_REQUEST_BODY_BYTES = 12 * 1024 * 1024; // 12 MB
-const IMAGE_EXT: Record<string, string> = {
-  "image/png": "png",
-  "image/jpeg": "jpg",
-  "image/webp": "webp",
-  "image/gif": "gif",
-};
+// Commands are bounded independently of Content-Length. File transfer belongs to SFTP.
+const MAX_REQUEST_BODY_BYTES = 1024 * 1024;
 
 // Hardening headers set on EVERY response (static + API), applied centrally in the fetch wrapper.
 // nosniff stops content-type confusion; no-referrer keeps the tailnet URL out of any Referer.
@@ -62,11 +41,6 @@ const SECURITY_HEADERS: Record<string, string> = {
   "referrer-policy": "no-referrer",
 };
 
-// Loopback Host/Origin forms (with an optional port). Loopback is always trusted — only tailscaled
-// (or a co-located proxy) can reach the bridge's port, so a loopback caller is the on-host operator.
-const LOOPBACK_HOST = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/;
-const NATIVE_CLIENT_HEADER = "x-herdr-client";
-const NATIVE_CLIENT_VALUE = "herdr-mobile-v1";
 const MUTATION_REQUEST_ID = /^[A-Za-z0-9._:-]{1,128}$/;
 const REPLY_DEDUPE_TTL_MS = 10 * 60 * 1000;
 const REPLY_DEDUPE_MAX_ENTRIES = 512;
@@ -86,13 +60,11 @@ export async function closeAgentHooks(server: object): Promise<void> {
 const streamServers = new WeakMap<object, HttpStreams>();
 export function closeHttpStreams(server: object): void { streamServers.get(server)?.close(); streamServers.delete(server); }
 
-const PANE_ROUTE = /^\/api\/pane\/([^/]+)(?:\/(reply|input|submit|keys|upload|close))?$/;
+const PANE_ROUTE = /^\/api\/pane\/([^/]+)(?:\/(reply|input|submit|keys|close))?$/;
 
 const TAB_ROUTE = /^\/api\/tab\/([^/]+)$/;
 const WORKTREE_ROUTE = /^\/api\/worktree\/([^/]+)$/;
 const PANE_FOCUS_ROUTE = /^\/api\/focus\/([^/]+)$/;
-const WORKSPACE_FILES_ROUTE = /^\/api\/workspace\/([^/]+)\/files$/;
-const WORKSPACE_FILE_ROUTE = /^\/api\/workspace\/([^/]+)\/file$/;
 const WORKSPACE_GIT_ROUTE = /^\/api\/workspace\/([^/]+)\/git$/;
 const WORKSPACE_DIFF_ROUTE = /^\/api\/workspace\/([^/]+)\/diff$/;
 
@@ -292,7 +264,7 @@ export class PaneMutationQueue {
   }
 }
 
-export function startServer(opts: {
+export async function startServer(opts: {
   cfg: Config;
   registry: SessionRegistry;
   audit: AuditLog;
@@ -304,7 +276,6 @@ export function startServer(opts: {
   herdrEvents?: HerdrEventHub;
   interactions?: InteractionService;
   enableHooks?: boolean;
-  directories?: DirectoryService;
 }) {
   const { cfg, registry, audit, liveUpdates } = opts;
   // Tests may inject a service; production uses its owner-only journal.
@@ -316,7 +287,6 @@ export function startServer(opts: {
   const herdrEvents = opts.herdrEvents ?? new HerdrEventHub();
   let interactions = opts.interactions;
   const requests = () => interactions ??= new InteractionService(lifecycle(), herdrEvents);
-  const directories = opts.directories ?? new DirectoryService(registry, cfg.browseRoots ?? []);
   const replyDeduplicator = new ReplyDeduplicator();
   const createDeduplicator = new CreateDeduplicator();
   const worktreeCreateDeduplicator = new WorktreeCreateDeduplicator();
@@ -331,19 +301,19 @@ export function startServer(opts: {
     if (!source) return null;
     return await resolveWorkspaceRoot(source.worktreeRoot, source.paneCwds);
   };
-  if (!isLoopbackBindHost(cfg.host)) {
-    throw new Error(`refusing non-loopback HERDR_RELAY_HOST: ${cfg.host}`);
-  }
-  const server = Bun.serve<LiveSocketData>({
-    hostname: cfg.host,
-    port: cfg.port,
-    // SSE heartbeat cadence is 15s; keep Bun's idle timeout longer than that.
-    idleTimeout: 30,
+  const lease = await prepareHttpSocket(cfg.relaySocketPath);
+  let server: Bun.Server<LiveSocketData>;
+  try {
+  server = Bun.serve<LiveSocketData>({
+    unix: lease.path,
     // Runtime cap on any request body — a chunked/lying client is cut off here even if its
-    // Content-Length is absent or false. The upload handler still does its own precise check.
+    // Content-Length is absent or false.
     maxRequestBodySize: MAX_REQUEST_BODY_BYTES,
 
     async fetch(req, bunServer) {
+      // UnixServeOptions has no global idleTimeout. Set per-request timeout long enough for
+      // SSE heartbeat traffic; fixed stream lifetime and bounded queues still apply.
+      bunServer.timeout(req, 30);
       const url = new URL(req.url);
       const { pathname } = url;
 
@@ -353,31 +323,6 @@ export function startServer(opts: {
       const sessionName = url.searchParams.get("session") ?? undefined;
       const unknownSession = () =>
         jsonError(`unknown session: ${sessionName ?? ""}`, 404, req.headers.get("accept-encoding"));
-
-      if (pathname === "/api/directories" || pathname === "/api/directories/validate") {
-        const denied = guard(req, cfg, req.method === "POST" ? "write" : "read");
-        if (denied) return denied;
-        if (req.method !== "GET" && !(req.method === "POST" && pathname === "/api/directories")) return text("method not allowed", 405);
-        try {
-          if (req.method === "POST") {
-            let body: unknown;
-            try { body = await req.json(); } catch { throw new LifecycleError(400, "invalid_request", "Expected a JSON object"); }
-            const result = await directories.create(sessionName, body);
-            audit.record({ action: "directory.create", session: sessionName, device: deviceAuth(req, cfg).device, detail: { path: result.path, created: result.created } });
-            return json(result, req.headers.get("accept-encoding"));
-          }
-          const path = url.searchParams.get("path");
-          if (pathname === "/api/directories/validate") return json(await directories.validate(sessionName, path), req.headers.get("accept-encoding"));
-          const rawLimit = url.searchParams.get("limit");
-          if (rawLimit !== null && !/^\d{1,3}$/.test(rawLimit)) throw new LifecycleError(400, "invalid_request", "Invalid directory limit");
-          const cursor = url.searchParams.get("cursor") ?? undefined;
-          if (path === null && (rawLimit !== null || cursor !== undefined)) throw new LifecycleError(400, "invalid_request", "Directory pagination requires path");
-          return json(await directories.list(sessionName, path === null ? undefined : { path, limit: rawLimit === null ? undefined : Number(rawLimit), cursor }), req.headers.get("accept-encoding"));
-        } catch (error) {
-          const failure = error instanceof LifecycleError ? error : new LifecycleError(500, "internal_error", "Directory operation failed");
-          return secure(new Response(JSON.stringify({ error: { code: failure.code, message: failure.message } }), { status: failure.status, headers: { "content-type": "application/json; charset=utf-8" } }));
-        }
-      }
 
       const responseMatch = pathname.match(/^\/api\/interactions\/([^/]+)\/response$/);
       if (pathname === "/api/interactions" || responseMatch) {
@@ -485,7 +430,7 @@ export function startServer(opts: {
       }
 
       if (pathname === "/api/live") {
-        const gate = checkAccess(req, cfg);
+        const gate = checkAccess(req, cfg, "write");
         if (!gate.ok) return text(gate.reason, 403);
         const rt = registry.get(sessionName);
         if (!rt) return unknownSession();
@@ -528,63 +473,6 @@ export function startServer(opts: {
       // The bridge validates that pane against Herdr's authoritative snapshot; the inspection layer
       // still rejects traversal, symlinks, oversized files, and unbounded command output.
       const inspectionPaneId = url.searchParams.get("paneId") ?? undefined;
-      const workspaceFilesMatch = pathname.match(WORKSPACE_FILES_ROUTE);
-      if (workspaceFilesMatch && req.method === "GET") {
-        const denied = guard(req, cfg, "read");
-        if (denied) return denied;
-        const rt = registry.get(sessionName);
-        if (!rt) return unknownSession();
-        try {
-          const workspaceId = decodeWorkspaceId(workspaceFilesMatch[1]!);
-          const root = await inspectedWorkspaceRoot(rt.engine, workspaceId, inspectionPaneId);
-          if (!root)
-            return jsonError(
-              inspectionPaneId ? "pane not found in workspace" : "workspace not found",
-              404,
-              req.headers.get("accept-encoding"),
-            );
-          const files = await listWorkspaceFiles(root);
-          return json(
-            {
-              workspaceId,
-              root: files.root,
-              entries: files.entries,
-              truncated: files.truncated,
-            } satisfies WorkspaceFilesResponse,
-            req.headers.get("accept-encoding"),
-          );
-        } catch (error) {
-          return workspaceInspectionFailure(error, req.headers.get("accept-encoding"));
-        }
-      }
-
-      const workspaceFileMatch = pathname.match(WORKSPACE_FILE_ROUTE);
-      if (workspaceFileMatch && req.method === "GET") {
-        const denied = guard(req, cfg, "read");
-        if (denied) return denied;
-        const rt = registry.get(sessionName);
-        if (!rt) return unknownSession();
-        const path = url.searchParams.get("path");
-        if (!path)
-          return jsonError("file path is required", 400, req.headers.get("accept-encoding"));
-        try {
-          const workspaceId = decodeWorkspaceId(workspaceFileMatch[1]!);
-          const root = await inspectedWorkspaceRoot(rt.engine, workspaceId, inspectionPaneId);
-          if (!root)
-            return jsonError(
-              inspectionPaneId ? "pane not found in workspace" : "workspace not found",
-              404,
-              req.headers.get("accept-encoding"),
-            );
-          return json(
-            await readWorkspaceFile(workspaceId, root, path),
-            req.headers.get("accept-encoding"),
-          );
-        } catch (error) {
-          return workspaceInspectionFailure(error, req.headers.get("accept-encoding"));
-        }
-      }
-
       const workspaceGitMatch = pathname.match(WORKSPACE_GIT_ROUTE);
       if (workspaceGitMatch && req.method === "GET") {
         const denied = guard(req, cfg, "read");
@@ -767,7 +655,7 @@ export function startServer(opts: {
       if (paneMatch) {
         const paneId = decodeURIComponent(paneMatch[1]!);
         const action = paneMatch[2];
-        // Reading a pane is allowed for any access-gated client; every action (reply/keys/upload/
+        // Reading a pane is allowed for any access-gated client; every action (reply/keys/
         // close) types into or restructures a terminal, so it additionally needs an authorised device.
         const denied = guard(req, cfg, action ? "write" : "read");
         if (denied) return denied;
@@ -800,8 +688,6 @@ export function startServer(opts: {
         if (action === "keys" && req.method === "POST") {
           return keysPane(herdr, paneId, req, audit, device, session, paneMutations);
         }
-        if (action === "upload" && req.method === "POST")
-          return uploadPane(cfg, paneId, req, audit, device, session);
         if (action === "close" && req.method === "POST") {
           return closePane(herdr, paneId, req, audit, device, session, paneMutations);
         }
@@ -922,37 +808,17 @@ export function startServer(opts: {
     },
   });
 
-  console.log(`[bridge] listening on http://${cfg.host}:${cfg.port}  (poll ${cfg.pollMs}ms)`);
-  if (cfg.host !== "127.0.0.1" && cfg.host !== "localhost") {
-    console.warn(
-      `[bridge] WARNING: bound to ${cfg.host}, not loopback — identity checks may be bypassable`,
-    );
-  }
-  if (cfg.deviceHeader) {
-    console.log(
-      `[bridge] per-device auth ON: trusting '${cfg.deviceHeader}', ${cfg.deviceAllowlist.length} device(s) allowlisted`,
-    );
-    if (cfg.deviceAllowlist.length === 0) {
-      console.warn(
-        `[bridge] WARNING: HERDR_RELAY_DEVICE_HEADER set but HERDR_RELAY_DEVICE_ALLOWLIST is empty — every device is read-only`,
-      );
-    }
-  }
-  if (!remoteIdentityConfigured(cfg)) {
-    console.warn(
-      `[bridge] remote API access is disabled until HERDR_RELAY_TRUSTED_USER, HERDR_RELAY_TRUSTED_USERS, or HERDR_RELAY_ALLOW_ANY_TAILNET_USER is configured; direct loopback remains available.`,
-    );
-  } else if (cfg.allowAnyTrustedUser) {
-    console.warn(
-      `[bridge] remote API access allows any authenticated proxy identity; enforce tailnet membership with Tailscale ACLs.`,
-    );
-  }
-  if (cfg.publicHosts.length === 0 && cfg.allowedOrigins.length === 0) {
-    console.warn(
-      `[bridge] remote Hosts are denied until HERDR_RELAY_PUBLIC_HOSTS or HERDR_RELAY_ALLOWED_ORIGINS is configured; loopback remains available.`,
-    );
-  }
-
+  lease.bound();
+  } catch (error) { lease.release(); throw error; }
+  const originalStop = server.stop.bind(server);
+  // The socket lease is released only after Bun stops accepting connections.
+  server.stop = async (force?: boolean) => {
+    closeHttpStreams(server);
+    await closeAgentHooks(server);
+    await originalStop(force);
+    lease.release();
+  };
+  console.log(`[bridge] listening on Unix socket ${cfg.relaySocketPath}`);
   if (opts.enableHooks) {
     const broker = requests();
     const hooks = new AgentHookServer(cfg.stateDir, registry, {
@@ -1974,264 +1840,26 @@ async function removeWorktree(
   return json(result, ae);
 }
 
-// Save an uploaded image to a host file and return its absolute path. The client then references
-// that path in a message; Claude Code / Codex read images by path (the terminal can't take a
-// pasted image over the socket). Validated by MIME and size; the filename is server-generated.
-async function uploadPane(
-  cfg: Config,
-  paneId: string,
-  req: Request,
-  audit: AuditLog,
-  device: string | null,
-  session: string,
-): Promise<Response> {
-  const ae = req.headers.get("accept-encoding");
-  // Reject an oversize upload by its declared Content-Length BEFORE buffering — req.formData()
-  // reads the whole body into memory first, so a 100 MB "image" would be materialised just to fail
-  // the size check below. Multipart adds a boundary + part headers, so allow a small slack.
-  const declared = Number(req.headers.get("content-length"));
-  if (Number.isFinite(declared) && declared > MAX_UPLOAD_BYTES + MAX_UPLOAD_OVERHEAD) {
-    return secure(
-      new Response(
-        JSON.stringify({
-          ok: false,
-          error: "image too large (max 10 MB)",
-        } satisfies UploadResponse),
-        { status: 413, headers: { "content-type": "application/json; charset=utf-8" } },
-      ),
-    );
-  }
-  let form: FormData;
-  try {
-    form = await req.formData();
-  } catch {
-    return text("expected multipart form data", 400);
-  }
-  const file = form.get("file");
-  if (!(file instanceof File)) {
-    return json({ ok: false, error: "no file" } satisfies UploadResponse, ae);
-  }
-  const ext = IMAGE_EXT[file.type];
-  if (!ext) {
-    return json(
-      { ok: false, error: `unsupported type: ${file.type || "unknown"}` } satisfies UploadResponse,
-      ae,
-    );
-  }
-  if (file.size > MAX_UPLOAD_BYTES) {
-    return json({ ok: false, error: "image too large (max 10 MB)" } satisfies UploadResponse, ae);
-  }
-  try {
-    const dir = join(cfg.stateDir, "uploads");
-    // 0700 — uploads (and the state dir they live under) may hold sensitive images; keep them
-    // owner-only. recursive:true applies the mode to any intermediate dirs it creates too.
-    await ensurePrivateDirectory(dir);
-    const safePane = paneId.replace(/[^A-Za-z0-9_-]/g, "_");
-    const filename = `${safePane}-${Date.now().toString(36)}-${crypto.randomUUID().slice(0, 8)}.${ext}`;
-    const fullPath = join(dir, filename);
-    await writePrivateFile(fullPath, new Uint8Array(await file.arrayBuffer()));
-    audit.record({
-      action: "upload",
-      paneId,
-      session,
-      device,
-      detail: { filename: file.name, size: file.size, saved: filename },
-    });
-    return json({ ok: true, path: fullPath } satisfies UploadResponse, ae);
-  } catch (err) {
-    return json({ ok: false, error: (err as Error).message } satisfies UploadResponse, ae);
-  }
-}
-
-/**
- * Access gate for the API:
- *  - Host allowlist (mandatory for non-loopback): a loopback Host is trusted only when the server
- *    itself binds loopback; otherwise the Host must be in HERDR_RELAY_PUBLIC_HOSTS or an allowed origin.
- *    This runs BEFORE Origin checks and defeats DNS rebinding.
- *  - Same-origin only (Origin host must equal Host) — defeats cross-site requests/CSRF. Browsers
- *    omit Origin on same-origin GETs (so the snapshot poll passes); they send it on POSTs.
- *    localhost and explicitly-configured origins are also allowed.
- *  - Origin required for browser writes. Native clients instead send `X-Herdr-Client:
- *    herdr-mobile-v1`, a non-simple header that cross-origin browsers cannot deliver without a CORS
- *    preflight (which this bridge never grants).
- *  - Reverse-proxy provenance: forwarding/Tailscale headers prevent a forged loopback Host from
- *    receiving direct-on-host exemptions.
- *  - Required remote identity: every non-loopback request needs a proxy-injected identity header
- *    and either an explicit configured allowlist match or the explicit allow-any-tailnet-user mode.
- *    Loopback callers remain available without one.
- */
-export function checkAccess(
-  req: Request,
-  cfg: Config,
-  level: "read" | "write" = "read",
-): { ok: true } | { ok: false; reason: string } {
-  const host = effectiveRequestHost(req);
-  // Deliberate threat boundary: Herdr Mobile Relay is an owner-scoped, single-user workstation service.
-  // TCP loopback is not an OS-user authentication mechanism; multi-user hosts need an isolating VM
-  // or user namespace rather than treating this local-operator exemption as cross-user security.
-  const trustedLoopback = isDirectLoopbackRequest(req, cfg);
-
-  // A reverse proxy reaches this loopback-only server from localhost too. Its forwarding headers
-  // are the provenance boundary that distinguishes that hop from a direct on-host operator; a
-  // forwarded request must never gain local privileges merely by forging Host: 127.0.0.1.
-  if (LOOPBACK_HOST.test(host) && !trustedLoopback) {
-    return { ok: false, reason: "host not allowed" };
-  }
-
-  // Fail closed for every non-loopback Host. The launcher derives the normal Tailscale MagicDNS
-  // hostname automatically; custom proxies must configure PUBLIC_HOSTS or ALLOWED_ORIGINS.
-  if (!isHostAllowed(host, cfg)) {
-    return { ok: false, reason: "host not allowed" };
-  }
-
+/** Browser/tunnel request-shape gate; SSH/account security belongs to the owner. */
+export function checkAccess(req: Request, cfg: Config, level: "read" | "write" = "read"): { ok: true } | { ok: false; reason: string } {
+  // Socket permissions carry host-owner authority. Proxy/device headers are never identity.
+  const host = req.headers.get("host") ?? "";
+  if (!/^(localhost|127\.0\.0\.1|\[::1\]|relay\.localhost)(:\d{1,5})?$/.test(host)) return { ok: false, reason: "host not allowed" };
+  if (["forwarded", "x-forwarded-for", "x-forwarded-host", "tailscale-user-login"].some((key) => req.headers.has(key))) return { ok: false, reason: "proxy headers not supported" };
   const origin = req.headers.get("origin");
-  if (origin) {
-    let originUrl: URL;
-    try {
-      originUrl = new URL(origin);
-    } catch {
-      return { ok: false, reason: "bad origin" };
-    }
-    const expectedProtocol = trustedLoopback ? "http:" : `${cfg.publicScheme}:`;
-    const explicitOrigin = cfg.allowedOrigins.some((allowedOrigin) => {
-      try {
-        return new URL(allowedOrigin).origin === originUrl.origin;
-      } catch {
-        return false;
-      }
-    });
-    const allowed =
-      (originUrl.host === host && originUrl.protocol === expectedProtocol) || explicitOrigin;
-    if (!allowed) return { ok: false, reason: "cross-origin rejected" };
-  } else if (
-    level === "write" &&
-    !trustedLoopback &&
-    req.headers.get(NATIVE_CLIENT_HEADER) !== NATIVE_CLIENT_VALUE
-  ) {
-    // Native fetch has no browser Origin. Its explicit non-simple header is the CSRF boundary:
-    // cross-origin browsers must preflight it, and this bridge never grants cross-origin CORS.
-    return { ok: false, reason: "origin required" };
-  }
-
-  const login = req.headers.get(cfg.trustedUserHeader)?.trim() ?? "";
-  if (!trustedLoopback && !remoteIdentityConfigured(cfg)) {
-    return { ok: false, reason: "remote identity not configured" };
-  }
-  if (!trustedLoopback && !login) {
-    return { ok: false, reason: "identity required" };
-  }
-  if (!trustedLoopback && !isTrustedRemoteLogin(login, cfg)) {
-    return { ok: false, reason: "identity not trusted" };
-  }
+  if (origin && !cfg.allowedOrigins.includes(origin)) return { ok: false, reason: "origin not allowed" };
+  // A non-simple header protects mutation and WebSocket handshakes from an arbitrary website
+  // reaching a client's local SSH tunnel. Native clients can set it. Browser SSE/read access
+  // also requires an explicitly configured origin; no permissive CORS is added here.
+  if (!origin && level === "write" && req.headers.get(NATIVE_CLIENT_HEADER) !== NATIVE_CLIENT_VALUE) return { ok: false, reason: "native client header required" };
   return { ok: true };
 }
-
-/**
- * Whether a Host header is one the bridge will answer to: a loopback form while bound to loopback,
- * an explicit HERDR_RELAY_PUBLIC_HOSTS entry, or the host of a configured allowed origin. Pure + exported
- * for tests.
- */
-export function isHostAllowed(host: string, cfg: Config): boolean {
-  if (!host || !isLoopbackBindHost(cfg.host)) return false;
-  if (isTrustedLoopbackHost(host, cfg)) return true;
-  if (cfg.publicHosts.includes(host)) return true;
-  return cfg.allowedOrigins.some((o) => {
-    try {
-      return new URL(o).host === host;
-    } catch {
-      return false;
-    }
-  });
-}
-
-/** Whether remote identity access is explicitly configured, never inferred from a public host. */
-function remoteIdentityConfigured(cfg: Config): boolean {
-  return cfg.allowAnyTrustedUser || Boolean(cfg.trustedUser) || cfg.trustedUsers.length > 0;
-}
-
-/** Exact allowlist match or explicit any-authenticated-tailnet-user mode. */
-function isTrustedRemoteLogin(login: string, cfg: Config): boolean {
-  if (!login) return false;
-  return cfg.allowAnyTrustedUser || login === cfg.trustedUser || cfg.trustedUsers.includes(login);
-}
-
-function isTrustedLoopbackHost(host: string, cfg: Config): boolean {
-  return isLoopbackBindHost(cfg.host) && LOOPBACK_HOST.test(host);
-}
-
-function isDirectLoopbackRequest(req: Request, cfg: Config): boolean {
-  if (!isTrustedLoopbackHost(req.headers.get("host") ?? "", cfg)) return false;
-  return !isProxiedRequest(req);
-}
-
-function effectiveRequestHost(req: Request): string {
-  const rawHost = req.headers.get("host") ?? "";
-  // Forwarded host metadata is meaningful only when the immutable HTTP Host says the upstream hop
-  // reached loopback. A direct request to any other Host can forge X-Forwarded-Host in browser JS.
-  if (!LOOPBACK_HOST.test(rawHost)) return rawHost;
-  if (!isProxiedRequest(req)) return rawHost;
-  return req.headers.get("x-forwarded-host")?.split(",", 1)[0]?.trim() || rawHost;
-}
-
-function isProxiedRequest(req: Request): boolean {
-  return ["forwarded", "x-forwarded-for", "x-forwarded-host", "tailscale-user-login"].some(
-    (header) => Boolean(req.headers.get(header)?.trim()),
-  );
-}
-
-/**
- * Combined API gate used by every handler. A request must always pass {@link checkAccess}
- * (same-origin / CSRF + optional Tailscale identity). A `"write"` request — one that types into a
- * terminal or creates panes — must additionally come from an authorised device (see
- * {@link deviceAuth}). Returns a 403 Response to short-circuit on denial, or null to proceed.
- */
 function guard(req: Request, cfg: Config, level: "read" | "write"): Response | null {
   const gate = checkAccess(req, cfg, level);
-  if (!gate.ok) return text(gate.reason, 403);
-  if (level === "write" && !deviceAuth(req, cfg).authorized) {
-    return text("device not authorised", 403);
-  }
-  return null;
+  return gate.ok ? null : text(gate.reason, 403);
 }
-
-/**
- * Optional per-device authorisation, layered on top of {@link checkAccess}. Off by default; enabled
- * by setting HERDR_RELAY_DEVICE_HEADER to the header a trusted upstream proxy injects, carrying an opaque
- * device identifier. The header is trusted only because the bridge binds loopback behind the proxy,
- * so a direct client can't forge it (the same trust basis as the Tailscale identity header). Matrix:
- *
- *   - feature off (no header configured) → not enforced, fully authorised (today's behaviour).
- *   - header absent on direct loopback   → authorised on-host operator.
- *   - header absent on a forwarded hop   → read-only, even with a forged loopback Host.
- *   - header absent on a public Host     → read-only; a proxy omission must fail closed.
- *   - header present, value allowlisted  → authorised; the session is attributed to that device.
- *   - header present, value not listed   → read-only. The "unknown" sentinel is never authorised,
- *                                          and an empty allowlist makes every device read-only — a
- *                                          fail-closed default for a security toggle you turned on.
- */
-export function deviceAuth(req: Request, cfg: Config): DeviceAuth {
-  if (!cfg.deviceHeader) return { enforced: false, device: null, authorized: true };
-  const raw = req.headers.get(cfg.deviceHeader);
-  const device = raw?.trim() ? raw.trim() : null;
-  if (!isLoopbackBindHost(cfg.host)) return { enforced: true, device, authorized: false };
-  const directLoopback = isDirectLoopbackRequest(req, cfg);
-  if (!device) {
-    return { enforced: true, device: null, authorized: directLoopback };
-  }
-  // A proxy-forwarded device header is not identity by itself: clients can often supply arbitrary
-  // request headers to a proxy. Remote device authorization therefore also requires a verified
-  // Tailscale identity accepted by the operator's allowlist/policy. Direct loopback remains the
-  // local-operator path.
-  const proxyIdentityVerified = isTrustedRemoteLogin(
-    req.headers.get(cfg.trustedUserHeader)?.trim() ?? "",
-    cfg,
-  );
-  const authorized =
-    device !== "unknown" &&
-    cfg.deviceAllowlist.includes(device) &&
-    (directLoopback || proxyIdentityVerified);
-  return { enforced: true, device, authorized };
-}
+/** Owner-scoped socket API: no per-device or forwarded-user authority. Kept for audit callsites. */
+export function deviceAuth(_req: Request, _cfg: Config): DeviceAuth { return { enforced: false, device: null, authorized: true }; }
 
 // Apply the shared hardening headers (nosniff / no-referrer) to any response. Every response the
 // bridge emits funnels through json(), text(), or a handful of inline responses —

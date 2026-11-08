@@ -10,7 +10,6 @@ import { ensurePrivateDirectory } from "./private-fs.ts";
 import { closeAgentHooks, closeHttpStreams, startServer } from "./server.ts";
 import { deriveConfigRoot, SessionRegistry, type SessionFactory } from "./sessions.ts";
 import { StateEngine } from "./state-engine.ts";
-import { SWEEP_INTERVAL_MS, sweepUploads } from "./uploads.ts";
 
 const cfg = loadConfig();
 await ensurePrivateDirectory(cfg.stateDir);
@@ -50,17 +49,12 @@ const registry = new SessionRegistry({
 await registry.refresh();
 const refreshTimer = setInterval(() => void registry.refresh(), 15_000);
 refreshTimer.unref();
-const uploadsDir = join(cfg.stateDir, "uploads");
-void sweepUploads(uploadsDir);
-const sweepTimer = setInterval(() => void sweepUploads(uploadsDir), SWEEP_INTERVAL_MS);
-sweepTimer.unref();
-const server = startServer({ cfg, registry, audit, liveUpdates, herdrEvents, version, enableHooks: true });
+const server = await startServer({ cfg, registry, audit, liveUpdates, herdrEvents, version, enableHooks: true });
 let stopping = false;
 async function shutdown() {
   if (stopping) return;
   stopping = true;
   clearInterval(refreshTimer);
-  clearInterval(sweepTimer);
   liveUpdates.closeAll();
   // Terminal observers belong to sockets and are closed by websocket.close.
   closeHttpStreams(server);

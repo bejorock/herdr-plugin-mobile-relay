@@ -1,3 +1,7 @@
+# Superseded: HTTP host directory operations
+
+**Removed by the SSH/SFTP migration.** Use host SFTP for folder/file operations. The following is historical 2.0.4 implementation evidence, not an available API or current root policy. See [SSH transport](SSH_TRANSPORT.md).
+
 # HTTP host directory operations
 
 Implemented on `lean-relay` (2.0.4); Linux-only in this first safe-filesystem increment. No ACP. Folder operations never create Herdr workspaces, start agents, run a shell or invoke models.

@@ -6,9 +6,13 @@
 
 This document supersedes the earlier ACP-centric direction. [Architecture](ARCHITECTURE.md) describes the active baseline; [OpenAPI](openapi.json) describes existing HTTP operations. Proposed capabilities here must not be treated as existing endpoints.
 
+## SSH/SFTP superseding decision
+
+The owner approved SSH + private Unix socket transport, retaining TypeScript/Bun. [SSH transport](SSH_TRANSPORT.md) supersedes TCP/Tailscale Serve, proxy/device identity and relay-scoped filesystem API requirements below. Generic file/folder operations belong to SFTP under the owner SSH account; no equivalent browse-root sandbox is claimed. This document retains earlier architectural discussion as history where superseded.
+
 ## Implementation tracking
 
-The first HTTP discovery/create/read/resume increment is implemented after the pruning baseline; [HTTP lifecycle](HTTP_LIFECYCLE.md) documents its exact behavior and remaining limitations. Ordinary Pi/Claude HTTP lifecycle and native context continuation are now [live-validated](HTTP_LIFECYCLE_LIVE_VALIDATION.md). HTTP transcript history/following and selected Herdr events are implemented; see [HTTP streams](HTTP_STREAMS.md). The first native interaction/adapter increment is implemented with explicit installation and [documented evidence](HTTP_INTERACTIONS.md). Owner-configured Linux folder operations are implemented with [documented limits/evidence](HTTP_DIRECTORIES.md). Fault-injected native failures, public attach-existing, reliable executable verification when hooks are installed and macOS folder operations remain incomplete; arbitrary nested-extension interception is not supported. The requirements below describe the complete target, not a claim those remaining features exist.
+The first HTTP discovery/create/read/resume increment is implemented after the pruning baseline; [HTTP lifecycle](HTTP_LIFECYCLE.md) documents its exact behavior and remaining limitations. Ordinary Pi/Claude HTTP lifecycle and native context continuation are now [live-validated](HTTP_LIFECYCLE_LIVE_VALIDATION.md). HTTP transcript history/following and selected Herdr events are implemented; see [HTTP streams](HTTP_STREAMS.md). The first native interaction/adapter increment is implemented with explicit installation and [documented evidence](HTTP_INTERACTIONS.md). The 2.0.4 custom directory implementation was removed in favor of SFTP. Fault-injected native failures, public attach-existing, reliable executable verification when hooks are installed remain incomplete; arbitrary nested-extension interception is not supported. The requirements below describe the complete target, not a claim those remaining features exist.
 
 ## 1. Goal and principles
 

@@ -1,5 +1,6 @@
 # HTTP native interactions
 
+**Transport update:** HTTP/SSE now runs on an owner-private Unix socket via SSH; generic filesystem operations use SFTP. See [SSH transport](SSH_TRANSPORT.md). Old TCP/Tailscale/device-policy references in historical evidence are not current authorization.
 Implemented first interaction increment on `lean-relay` (2.0.3); evidence and limits below. No ACP and no UI/card model.
 
 - `GET /api/interactions?session=<runtime>&conversationId=<optional>` returns `{session,interactions:[...]}` for currently pending requests. Unknown runtime 404, disconnected runtime 503. Read access required.

@@ -51,10 +51,10 @@ JSON
     const marker = join(directory, "must-not-exist");
     await writeFile(
       join(config, ".env"),
-      `# valid configuration\nHERDR_RELAY_TRUSTED_USER=person@example.com\nIGNORED=$(touch ${marker})\n`,
+      `# valid configuration\nHERDR_RELAY_SOCKET=/tmp/private/relay.sock\nIGNORED=$(touch ${marker})\n`,
     );
     const script = resolve(import.meta.dir, "../scripts/relay-ctl.sh");
-    const result = Bun.spawnSync(["/bin/bash", "-c", 'source "$1"; test "$HERDR_RELAY_TRUSTED_USER" = person@example.com; test -n "$IGNORED"; test ! -e "$2"', "bash", script, marker], {
+    const result = Bun.spawnSync(["/bin/bash", "-c", 'source "$1"; test "$HERDR_RELAY_SOCKET" = /tmp/private/relay.sock; test -n "$IGNORED"; test ! -e "$2"', "bash", script, marker], {
       env: { ...process.env, HOME: directory, HERDR_PLUGIN_CONFIG_DIR: config, PATH: "/usr/bin:/bin" },
       stdout: "pipe", stderr: "pipe",
     });
@@ -154,9 +154,14 @@ JSON
     expect(result.exitCode, result.stderr.toString()).toBe(0);
   });
 
-  test("reference systemd unit leaves launcher-only effective values unset", async () => {
+  test("reference unit and launcher are socket-only without network publishing", async () => {
     const unit = await Bun.file(resolve(import.meta.dir, "../systemd/rad-herdr-mobile-relay.service")).text();
-    expect(unit).not.toContain("HERDR_RELAY_EFFECTIVE_PORT");
-    expect(unit).not.toContain("HERDR_RELAY_EFFECTIVE_PUBLIC_HOSTS");
+    expect(unit).toContain("HERDR_RELAY_SOCKET=");
+    expect(unit).toContain("UMask=0077");
+    expect(unit).not.toContain("PrivateTmp=yes");
+    const script = await Bun.file(resolve(import.meta.dir, "../scripts/relay-ctl.sh")).text();
+    expect(script).not.toContain("tailscale");
+    expect(script).not.toContain("HERDR_RELAY_PORT");
+    expect(script).toContain("unix: process.argv[1]");
   });
 });

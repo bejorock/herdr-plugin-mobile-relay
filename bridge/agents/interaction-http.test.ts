@@ -18,7 +18,7 @@ test("real Unix request -> HTTP pending/SSE -> HTTP response -> exact native cal
     herdr: { getAgent: async () => ({ paneId: "p1", workspaceId: "w1", agent: "pi", cwd: "/repo", agentSession: native }) } };
   const registry = { get: () => runtime } as unknown as SessionRegistry;
   const conversations = new ConversationService(registry, new ConversationStore(dir), { cwd: async (path) => path, validate: async () => {}, pause: async () => {} });
-  const server = startServer({ cfg: { ...loadConfig(), port: 0, stateDir: dir, trustedUser: "owner@test", trustedUsers: [], allowAnyTrustedUser: false, deviceHeader: "x-device", deviceAllowlist: ["owner"], publicHosts: ["relay.test"] },
+  const server = await startServer({ cfg: { ...loadConfig(), relaySocketPath: join(dir, "relay.sock"), stateDir: dir },
     registry, conversations, herdrEvents: new HerdrEventHub(), enableHooks: true, audit: { record: () => {} } as never, liveUpdates: {} as never });
   let socket: Socket | undefined;
   try {
@@ -30,7 +30,8 @@ test("real Unix request -> HTTP pending/SSE -> HTTP response -> exact native cal
     socket.write(JSON.stringify({ version: 1, type: "hello", adapter: { kind: "pi", name: "test", version: "2" }, binding: { herdrSession: "default", paneId: "p1", agent: "pi", nativeSession: native } }) + "\n");
     for (let i = 0; !received.length && i < 50; i++) await sleep();
     expect(received[0].type).toBe("hello_ack");
-    const base = `http://127.0.0.1:${server.port}`;
+    const base = "http://localhost";
+    const fetch = (url: string, init: RequestInit = {}) => globalThis.fetch(url, { ...init, unix: server.url.pathname, headers: { "x-herdr-client": "herdr-mobile-v1", ...init.headers as Record<string, string> } });
     const abort = new AbortController(); const events = await fetch(base + "/api/events", { signal: abort.signal }); const reader = events.body!.getReader(); await reader.read();
     socket.write(JSON.stringify({ version: 1, type: "event", eventId: "request:1", sequence: 1, event: { kind: "interaction.request", interactionId: "native-child-1", interactionKind: "permission", title: "Child request", executionId: "child-1", options: [{ optionId: "allow_once", name: "Allow" }] } }) + "\n");
     let pending: any;
@@ -38,7 +39,7 @@ test("real Unix request -> HTTP pending/SSE -> HTTP response -> exact native cal
     expect(pending).toMatchObject({ executionId: "child-1", title: "Child request" });
     const event = new TextDecoder().decode((await reader.read()).value); expect(event).toContain("interaction.requested"); expect(event).not.toContain("/private/native");
     const post = (response: unknown, headers = {}) => fetch(base + `/api/interactions/${pending.id}/response`, { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify({ response }) });
-    expect((await post({ optionId: "allow_once" }, { host: "relay.test", origin: "https://relay.test", "tailscale-user-login": "owner@test", "x-device": "observer" })).status).toBe(403);
+    expect((await post({ optionId: "allow_once" }, { origin: "https://unapproved-browser.test" })).status).toBe(403);
     expect((await post({ optionId: "invented" })).status).toBe(400);
     expect((await post({ optionId: "allow_once" })).status).toBe(200);
     for (let i = 0; !received.some((v) => v.type === "command") && i < 50; i++) await sleep();

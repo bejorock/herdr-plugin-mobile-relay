@@ -18,14 +18,12 @@ WorkingDirectory=@PLUGIN_ROOT@
 ExecStart=@BUN@ run @PLUGIN_ROOT@/bridge/index.ts
 Restart=on-failure
 RestartSec=5
-# Hardening: the bridge is remote shell access, so deny privilege escalation and give it a private
-# /tmp. ProtectSystem is intentionally NOT set — the only write path is the env-driven state dir,
-# which Herdr may inject to an arbitrary location, so it can't be enumerated in a static ReadWritePaths.
+# Keep owner sockets visible to the user's SSH sessions; do not isolate them in PrivateTmp.
+# Restrict new socket/state files and deny privilege escalation.
 NoNewPrivileges=yes
-PrivateTmp=yes
+UMask=0077
 Environment=HERDR_SOCKET_PATH=%h/.config/herdr/herdr.sock
-Environment=HERDR_RELAY_PORT=8787
-Environment=HERDR_RELAY_PUBLIC_HOSTS=
+Environment=HERDR_RELAY_SOCKET=%h/.local/state/rad-herdr-mobile-relay/relay.sock
 Environment=HERDR_PLUGIN_CONFIG_DIR=%h/.config/rad-herdr-mobile-relay
 EnvironmentFile=-%h/.config/rad-herdr-mobile-relay/.env
 

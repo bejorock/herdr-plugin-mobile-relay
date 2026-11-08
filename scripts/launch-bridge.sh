@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # launchd entrypoint: load the same plugin environment as relay-ctl, then pin the launcher's
-# validated socket/port/public-host values before starting the long-lived bridge process.
+# Herdr socket before starting the socket-only daemon.
 set -euo pipefail
 
 PLUGIN_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -26,6 +26,4 @@ load_dotenv() {
 load_dotenv "${CONFIG_DIR}/.env"
 
 export HERDR_SOCKET_PATH="${HERDR_RELAY_LAUNCH_SOCKET_PATH:?missing HERDR_RELAY_LAUNCH_SOCKET_PATH}"
-export HERDR_RELAY_PORT="${HERDR_RELAY_EFFECTIVE_PORT:?missing HERDR_RELAY_EFFECTIVE_PORT}"
-export HERDR_RELAY_PUBLIC_HOSTS="${HERDR_RELAY_EFFECTIVE_PUBLIC_HOSTS:-}"
 exec "${HERDR_RELAY_LAUNCH_BUN:?missing HERDR_RELAY_LAUNCH_BUN}" run "${PLUGIN_ROOT}/bridge/index.ts"

@@ -1,4 +1,4 @@
-# Lean relay API
+# Owner socket relay API
 
 See [OpenAPI](openapi.json) for retained HTTP operations and [README](../README.md) for deployment and security.
 
@@ -11,10 +11,10 @@ REST responses acknowledge Herdr operations, not model completion. A `textDelive
 Upgrade the route with a standard WebSocket client:
 
 ```js
-const socket = new WebSocket("ws://127.0.0.1:8787/api/live?session=default");
+const socket = new WebSocket("ws://127.0.0.1:18787/api/live?session=default");
 ```
 
-The upgrade follows the same Host, Tailscale identity, and device authorization checks as REST. A socket opened by a read-only device receives status and terminal frames but cannot drive an observed terminal.
+The upgrade uses the private Unix HTTP socket over SSH and the request-shape gate; native clients include `X-Herdr-Client: herdr-mobile-v1`. No proxy/device identity is trusted. See [SSH transport](SSH_TRANSPORT.md). The connecting owner has terminal control authority.
 
 ### Server → client messages
 

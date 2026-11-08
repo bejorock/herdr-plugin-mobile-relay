@@ -1,4 +1,7 @@
-import { describe, expect, test } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, test } from "bun:test";
 
 import {
   checkAccess,
@@ -6,7 +9,6 @@ import {
   CreateDeduplicator,
   deviceAuth,
   decodeWorkspaceId,
-  isHostAllowed,
   paneReadResponse,
   parseCreateTabBody,
   parseCreateWorktreeBody,
@@ -35,45 +37,17 @@ import { HerdrRequestError, type PaneRead } from "./herdr-client.ts";
 import { LifecycleError, type ConversationService } from "./agents/conversations.ts";
 import type { TranscriptService } from "./agents/transcripts.ts";
 import { HerdrEventHub } from "./http-events.ts";
-import type { DirectoryService } from "./directories.ts";
 
-// checkAccess is the API security gate (same-origin/CSRF + optional Tailscale identity). A
-// regression here silently opens remote shell access, so it gets the most direct coverage.
-
-function req(headers: Record<string, string>): Request {
-  const lower: Record<string, string> = {};
-  for (const [k, v] of Object.entries(headers)) lower[k.toLowerCase()] = v;
-  return {
-    headers: { get: (name: string) => lower[name.toLowerCase()] ?? null },
-  } as unknown as Request;
+const sockets: string[] = [];
+afterEach(async () => { await Promise.all(sockets.splice(0).map((dir) => rm(dir, { recursive: true, force: true }))); });
+function req(headers: Record<string, string>): Request { return new Request("http://localhost/", { headers: { host: "localhost", ...headers } }); }
+async function cfg(overrides: Partial<Config> = {}): Promise<Config> {
+  const dir = await mkdtemp(join(tmpdir(), "relay-route-")); sockets.push(dir);
+  return { socketPath: "/tmp/herdr.sock", relaySocketPath: join(dir, "relay.sock"), stateDir: dir, pollMs: 1500, pollIdleMs: 12000,
+    readLines: 200, submitKeys: ["Enter"], allowedOrigins: [], multiSession: true, ...overrides };
 }
-
-function authedReq(headers: Record<string, string>): Request {
-  return req({ ...headers, "tailscale-user-login": "me@example.com" });
-}
-
-function cfg(overrides: Partial<Config> = {}): Config {
-  return {
-    socketPath: "/tmp/herdr.sock",
-    port: 8787,
-    host: "127.0.0.1",
-    pollMs: 1500,
-    pollIdleMs: 12_000,
-    readLines: 200,
-    submitKeys: ["Enter"],
-    trustedUser: "me@example.com",
-    trustedUsers: [],
-    allowAnyTrustedUser: false,
-    trustedUserHeader: "tailscale-user-login",
-    deviceHeader: "",
-    deviceAllowlist: [],
-    allowedOrigins: [],
-    publicHosts: [],
-    publicScheme: "https",
-    stateDir: "/tmp/state",
-    multiSession: true,
-    ...overrides,
-  };
+function client(server: Awaited<ReturnType<typeof startServer>>) {
+  return (url: string, init: RequestInit = {}) => fetch(url, { ...init, unix: server.url.pathname, headers: { "x-herdr-client": "herdr-mobile-v1", ...init.headers as Record<string, string> } });
 }
 
 describe("closeScopePaneIds", () => {
@@ -183,48 +157,25 @@ describe("lean API surface", () => {
   });
   test("keeps HTTP configuration and snapshots without removed application fields", async () => {
     const snapshot = { bridge: "connected", agents: [{ paneId: "p1", nativeSession: { value: "/private/transcript" } }], shellPanes: [], workspaces: [], tabs: [] };
-    const server = startServer({
-      cfg: cfg({ port: 0 }), version: "2.0.0-test",
+    const server = await startServer({
+      cfg: await cfg(), version: "2.0.0-test",
       registry: { get: () => ({ engine: { current: () => snapshot } }), list: () => [] } as never,
       audit: {} as never, liveUpdates: {} as never,
     });
+    const fetch = client(server);
     try {
-      const base = `http://127.0.0.1:${server.port}`;
+      const base = `http://localhost`;
       expect(await (await fetch(`${base}/api/config`)).json()).toEqual({ build: "2.0.0-test" });
       const response = await (await fetch(`${base}/api/snapshot`)).json() as Record<string, unknown>;
       expect(response.bridge).toBe("connected");
       expect(response).not.toHaveProperty("notifications");
       expect(response).not.toHaveProperty("update");
       expect(JSON.stringify(response)).not.toContain("/private/transcript");
-      for (const path of ["/", "/developer.html", "/acp", "/api/subscribe", "/api/push-test", "/api/notifications/prefs", "/api/notifications/snooze", "/api/update/check"]) {
+      for (const path of ["/", "/developer.html", "/acp", "/api/subscribe", "/api/push-test", "/api/notifications/prefs", "/api/notifications/snooze", "/api/update/check", "/api/directories", "/api/directories/validate", "/api/workspace/test/files", "/api/workspace/test/file", "/api/pane/test/upload"]) {
         for (const method of ["GET", "POST"]) {
           expect((await fetch(`${base}${path}`, { method })).status).toBe(404);
         }
       }
-    } finally { await server.stop(true); }
-  });
-});
-
-describe("HTTP directory routes", () => {
-  test("routes roots/list/validate/create with runtime selection and write authorization", async () => {
-    const calls: unknown[] = [];
-    const service = {
-      list: async (...args: unknown[]) => { calls.push(args); return { roots: [] }; },
-      validate: async (...args: unknown[]) => { calls.push(args); return { path: "/root", valid: true, reason: null }; },
-      create: async (...args: unknown[]) => { calls.push(args); return { ok: true, path: "/root/new", created: true }; },
-    } as unknown as DirectoryService;
-    const server = startServer({ cfg: cfg({ port: 0, publicHosts: ["relay.test"], deviceHeader: "x-device", deviceAllowlist: ["owner"] }), registry: {} as never,
-      directories: service, audit: { record: () => {} } as never, liveUpdates: {} as never });
-    try {
-      const base = `http://127.0.0.1:${server.port}`;
-      expect((await fetch(base + "/api/directories?session=work")).status).toBe(200); expect(calls[0]).toEqual(["work", undefined]);
-      await fetch(base + "/api/directories?session=work&path=%2Froot&limit=2&cursor=abc"); expect(calls[1]).toEqual(["work", { path: "/root", limit: 2, cursor: "abc" }]);
-      await fetch(base + "/api/directories/validate?session=work&path=%2Froot"); expect(calls[2]).toEqual(["work", "/root"]);
-      expect((await fetch(base + "/api/directories?limit=100")).status).toBe(400);
-      const post = (headers: Record<string, string> = {}) => fetch(base + "/api/directories?session=work", { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify({ parentPath: "/root", name: "new", requestId: "r1" }) });
-      expect((await post({ host: "relay.test", origin: "https://relay.test", "tailscale-user-login": "me@example.com", "x-device": "observer" })).status).toBe(403);
-      expect(calls).toHaveLength(3);
-      expect((await post()).status).toBe(200); expect(calls[3]).toEqual(["work", { parentPath: "/root", name: "new", requestId: "r1" }]);
     } finally { await server.stop(true); }
   });
 });
@@ -235,10 +186,11 @@ describe("HTTP transcript and event routes", () => {
     const page = { conversationId: "c1", kind: "pi", records: [{ id: "r1", role: "user", content: "hello" }], nextCursor: "opaque", hasMore: false };
     const transcripts = { page: async (id: string, opts: unknown) => { calls.push({ id, opts }); return page; } } as unknown as TranscriptService;
     const hub = new HerdrEventHub();
-    const server = startServer({ cfg: cfg({ port: 0 }), registry: {} as never, audit: {} as never, liveUpdates: {} as never,
+    const server = await startServer({ cfg: await cfg(), registry: {} as never, audit: {} as never, liveUpdates: {} as never,
       conversations: { runtime: () => ({ name: "work" }) } as never, transcripts, herdrEvents: hub });
+    const fetch = client(server);
     try {
-      const base = `http://127.0.0.1:${server.port}`;
+      const base = `http://localhost`;
       const history = await fetch(`${base}/api/conversations/c1/transcript?session=work&limit=2&cursor=before`);
       expect(history.status).toBe(200); expect(await history.json()).toEqual(page);
       expect(calls[0]).toEqual({ id: "c1", opts: { session: "work", limit: 2, cursor: "before" } });
@@ -270,9 +222,10 @@ describe("HTTP conversation routes", () => {
       get: async (id: string, session: unknown) => { calls.push({ id, session }); if (id === "unknown") throw new LifecycleError(404, "conversation_unknown", "Unknown conversation"); return conversation; },
       resume: async (...args: unknown[]) => { calls.push(args); return conversation; },
     } as unknown as ConversationService;
-    const server = startServer({ cfg: cfg({ port: 0 }), registry: {} as never, audit: { record: () => {} } as never, liveUpdates: {} as never, conversations: service });
+    const server = await startServer({ cfg: await cfg(), registry: {} as never, audit: { record: () => {} } as never, liveUpdates: {} as never, conversations: service });
+    const fetch = client(server);
     try {
-      const base = `http://127.0.0.1:${server.port}`;
+      const base = `http://localhost`;
       expect((await fetch(`${base}/api/agent-kinds?session=work`)).status).toBe(200);
       const post = (path: string, body: unknown) => fetch(base + path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
       const created = await post("/api/conversations?session=work", { kind: "pi", cwd: "/repo", requestId: "r1" });
@@ -286,333 +239,23 @@ describe("HTTP conversation routes", () => {
       expect((await fetch(`${base}/api/conversations`, { method: "GET" })).status).toBe(405);
     } finally { await server.stop(true); }
   });
-  test("read-only devices cannot launch or restore and unauthorized requests do not touch services", async () => {
-    let calls = 0;
-    const service = { create: async () => { calls++; }, resume: async () => { calls++; } } as unknown as ConversationService;
-    const server = startServer({ cfg: cfg({ port: 0, publicHosts: ["relay.example.ts.net"], deviceHeader: "x-device", deviceAllowlist: ["owner"] }), registry: {} as never,
-      audit: {} as never, liveUpdates: {} as never, conversations: service });
-    try {
-      const base = `http://127.0.0.1:${server.port}`;
-      for (const path of ["/api/conversations", "/api/conversations/known/resume"]) {
-        const result = await fetch(base + path, { method: "POST", headers: { host: "relay.example.ts.net", "tailscale-user-login": "me@example.com", "x-device": "readonly", origin: "https://relay.example.ts.net" }, body: "{}" });
-        expect(result.status).toBe(403);
-      }
-      expect(calls).toBe(0);
-    } finally { await server.stop(true); }
-  });
+
 });
 
-describe("config route access", () => {
-  test("rejects a remote config read when remote identity is not configured", async () => {
-    const server = startServer({
-      cfg: cfg({ port: 0, trustedUser: "", publicHosts: ["relay.example.ts.net"] }),
-      registry: {} as never,
-      audit: {} as never,
-      liveUpdates: {} as never,
-    });
-    try {
-      const response = await fetch(`http://127.0.0.1:${server.port}/api/config`, {
-        headers: { host: "relay.example.ts.net" },
-      });
-      expect(response.status).toBe(403);
-      expect(response.headers.get("x-rad-herdr-mobile-relay")).toBe("rad-herdr-mobile-relay-v1");
-    } finally {
-      server.stop(true);
-    }
+describe("owner socket request gate", () => {
+  test("native clients may read, mutations require a non-simple client marker", async () => {
+    const config = await cfg();
+    expect(checkAccess(req({}), config)).toEqual({ ok: true });
+    expect(checkAccess(req({}), config, "write").ok).toBe(false);
+    expect(checkAccess(req({ "x-herdr-client": "herdr-mobile-v1" }), config, "write")).toEqual({ ok: true });
   });
-});
-
-describe("checkAccess — same-origin / CSRF gate", () => {
-  const remote = cfg({ publicHosts: ["relay.example.ts.net"] });
-
-  test("allows a request with no Origin header (same-origin GET)", () => {
-    expect(checkAccess(authedReq({ host: "relay.example.ts.net" }), remote)).toEqual({ ok: true });
-  });
-
-  test("allows when the Origin host equals the Host header", () => {
-    const r = checkAccess(
-      authedReq({ origin: "https://relay.example.ts.net", host: "relay.example.ts.net" }),
-      remote,
-    );
-    expect(r).toEqual({ ok: true });
-  });
-
-  test("rejects a cross-scheme origin on the same public Host", () => {
-    expect(
-      checkAccess(
-        req({ origin: "http://relay.example.ts.net", host: "relay.example.ts.net" }),
-        remote,
-        "write",
-      ),
-    ).toEqual({ ok: false, reason: "cross-origin rejected" });
-  });
-
-  test("accepts HTTP same-origin only when public HTTP serve mode is configured", () => {
-    const http = cfg({ publicHosts: ["relay.example.ts.net:8787"], publicScheme: "http" });
-    expect(
-      checkAccess(
-        authedReq({ origin: "http://relay.example.ts.net:8787", host: "relay.example.ts.net:8787" }),
-        http,
-        "write",
-      ),
-    ).toEqual({ ok: true });
-    expect(
-      checkAccess(
-        req({ origin: "https://relay.example.ts.net:8787", host: "relay.example.ts.net:8787" }),
-        http,
-        "write",
-      ),
-    ).toEqual({ ok: false, reason: "cross-origin rejected" });
-  });
-
-  test("rejects a genuine cross-origin request", () => {
-    const r = checkAccess(
-      req({ origin: "https://evil.example.com", host: "relay.example.ts.net" }),
-      remote,
-    );
-    expect(r).toEqual({ ok: false, reason: "cross-origin rejected" });
-  });
-
-  test("allows only the exact loopback origin, not another local port", () => {
-    expect(
-      checkAccess(req({ origin: "http://localhost:8787", host: "relay.example.ts.net" }), remote),
-    ).toEqual({ ok: false, reason: "cross-origin rejected" });
-    expect(checkAccess(req({ origin: "http://127.0.0.1:8787", host: "127.0.0.1:8787" }), cfg())).toEqual({
-      ok: true,
-    });
-    expect(checkAccess(
-      req({ origin: "http://127.0.0.1:5173", host: "127.0.0.1:8787" }),
-      cfg(),
-      "write",
-    )).toEqual({ ok: false, reason: "cross-origin rejected" });
-  });
-
-  test("allows an explicitly-configured extra origin (HERDR_RELAY_ALLOWED_ORIGINS)", () => {
-    const c = cfg({ allowedOrigins: ["https://relay.example.com"] });
-    const r = checkAccess(
-      authedReq({ origin: "https://relay.example.com", host: "relay.example.com" }),
-      c,
-    );
-    expect(r).toEqual({ ok: true });
-  });
-
-  test("rejects an unparseable Origin", () => {
-    expect(checkAccess(req({ origin: "notaurl", host: "127.0.0.1:8787" }), cfg())).toEqual({
-      ok: false,
-      reason: "bad origin",
-    });
-  });
-});
-
-describe("checkAccess — Tailscale identity gate", () => {
-  test("allows configured additional Tailscale users but rejects other identities", () => {
-    const multi = cfg({ publicHosts: ["relay.example.ts.net"], trustedUsers: ["teammate@example.com", "reader@example.com"] });
-    expect(checkAccess(req({ host: "relay.example.ts.net", "tailscale-user-login": "teammate@example.com" }), multi)).toEqual({ ok: true });
-    expect(checkAccess(req({ host: "relay.example.ts.net", "tailscale-user-login": "other@example.com" }), multi)).toEqual({ ok: false, reason: "identity not trusted" });
-  });
-
-  test("allow-any mode requires a proxy identity but accepts any Tailscale user", () => {
-    const anyTailnetUser = cfg({ publicHosts: ["relay.example.ts.net"], trustedUser: "", trustedUsers: [], allowAnyTrustedUser: true });
-    expect(checkAccess(req({ host: "relay.example.ts.net", "tailscale-user-login": "teammate@example.com" }), anyTailnetUser)).toEqual({ ok: true });
-    expect(checkAccess(req({ host: "relay.example.ts.net" }), anyTailnetUser)).toEqual({ ok: false, reason: "identity required" });
-  });
-
-  test("with no trusted user, direct loopback passes but every remote identity fails closed", () => {
-    expect(checkAccess(req({ host: "127.0.0.1:8787" }), cfg({ trustedUser: "" }))).toEqual({ ok: true });
-    expect(
-      checkAccess(
-        req({ host: "relay.example.ts.net", "tailscale-user-login": "anyone@example.com" }),
-        cfg({ trustedUser: "", publicHosts: ["relay.example.ts.net"] }),
-      ),
-    ).toEqual({ ok: false, reason: "remote identity not configured" });
-  });
-
-  test("with a trusted user set, a matching login passes", () => {
-    const c = cfg({ trustedUser: "me@example.com", publicHosts: ["relay.example.ts.net"] });
-    expect(
-      checkAccess(req({ host: "relay.example.ts.net", "tailscale-user-login": "me@example.com" }), c),
-    ).toEqual({ ok: true });
-  });
-
-  test("with a trusted user set, a mismatching login is rejected", () => {
-    const c = cfg({ trustedUser: "me@example.com", publicHosts: ["relay.example.ts.net"] });
-    expect(
-      checkAccess(req({ host: "relay.example.ts.net", "tailscale-user-login": "intruder@example.com" }), c),
-    ).toEqual({ ok: false, reason: "identity not trusted" });
-  });
-
-  test("with a trusted user set, a missing header still passes (documented loopback tolerance)", () => {
-    const c = cfg({ trustedUser: "me@example.com" });
-    expect(checkAccess(req({ host: "127.0.0.1:8787" }), c)).toEqual({ ok: true });
-  });
-
-  test("with a trusted user set, a remote request missing the identity is rejected", () => {
-    const c = cfg({ trustedUser: "me@example.com", publicHosts: ["relay.example.ts.net"] });
-    expect(checkAccess(req({ host: "relay.example.ts.net" }), c)).toEqual({
-      ok: false,
-      reason: "identity required",
-    });
-  });
-});
-
-describe("checkAccess — Host-header validation (HERDR_RELAY_PUBLIC_HOSTS)", () => {
-  const c = cfg({ publicHosts: ["relay.example.ts.net"] });
-
-  test("DNS-rebinding: Origin==Host==evil host is rejected once publicHosts is set", () => {
-    expect(
-      checkAccess(req({ origin: "http://evil.example.com", host: "evil.example.com" }), c),
-    ).toEqual({ ok: false, reason: "host not allowed" });
-    // Fails closed even for a write with a matching evil Origin.
-    expect(
-      checkAccess(req({ origin: "http://evil.example.com", host: "evil.example.com" }), c, "write"),
-    ).toEqual({ ok: false, reason: "host not allowed" });
-  });
-
-  test("a legit MagicDNS host with a matching Origin passes", () => {
-    expect(
-      checkAccess(
-        authedReq({ origin: "https://relay.example.ts.net", host: "relay.example.ts.net" }),
-        c,
-      ),
-    ).toEqual({ ok: true });
-  });
-
-  test("loopback Host always passes even with publicHosts set (read and write)", () => {
-    expect(checkAccess(req({ host: "127.0.0.1:8787" }), c)).toEqual({ ok: true });
-    expect(checkAccess(req({ host: "localhost:8787" }), c, "write")).toEqual({ ok: true });
-  });
-
-  test("a Host derived from an allowed origin passes", () => {
-    const c2 = cfg({
-      publicHosts: ["relay.example.ts.net"],
-      allowedOrigins: ["https://relay.example.com"],
-    });
-    expect(
-      checkAccess(authedReq({ origin: "https://relay.example.com", host: "relay.example.com" }), c2),
-    ).toEqual({ ok: true });
-  });
-
-  test("empty publicHosts rejects every non-loopback Host even when Origin matches", () => {
-    expect(
-      checkAccess(req({ origin: "https://evil.example.com", host: "evil.example.com" }), cfg()),
-    ).toEqual({ ok: false, reason: "host not allowed" });
-  });
-});
-
-describe("checkAccess — Origin required for writes", () => {
-  test("allows an explicit native client write on a configured public Host", () => {
-    expect(
-      checkAccess(
-        authedReq({ host: "relay.example.ts.net", "x-herdr-client": "herdr-mobile-v1" }),
-        cfg({ publicHosts: ["relay.example.ts.net"] }),
-        "write",
-      ),
-    ).toEqual({ ok: true });
-  });
-
-  test("write with no Origin from a non-loopback Host is rejected", () => {
-    expect(checkAccess(req({ host: "relay.example.ts.net" }), cfg(), "write")).toEqual({
-      ok: false,
-      reason: "host not allowed",
-    });
-  });
-
-  test("write with no Origin from loopback is allowed (curl on the host)", () => {
-    expect(checkAccess(req({ host: "127.0.0.1:8787" }), cfg(), "write")).toEqual({ ok: true });
-  });
-
-  test("read with no Origin from a configured public Host passes", () => {
-    expect(
-      checkAccess(
-        authedReq({ host: "relay.example.ts.net" }),
-        cfg({ publicHosts: ["relay.example.ts.net"] }),
-        "read",
-      ),
-    ).toEqual({ ok: true });
-  });
-
-  test("write WITH a matching Origin passes (normal browser POST)", () => {
-    expect(
-      checkAccess(
-        authedReq({ origin: "https://relay.example.ts.net", host: "relay.example.ts.net" }),
-        cfg({ publicHosts: ["relay.example.ts.net"] }),
-        "write",
-      ),
-    ).toEqual({ ok: true });
-  });
-});
-
-describe("checkAccess — reverse-proxy provenance", () => {
-  test("a forwarded request cannot forge a loopback Host", () => {
-    const c = cfg({ publicHosts: ["relay.example.ts.net"] });
-    const forged = req({ host: "127.0.0.1:8787", "x-forwarded-for": "100.64.0.8" });
-    expect(checkAccess(forged, c, "write")).toEqual({ ok: false, reason: "host not allowed" });
-    expect(deviceAuth(forged, { ...c, deviceHeader: "x-device-id" })).toEqual({
-      enforced: true,
-      device: null,
-      authorized: false,
-    });
-  });
-
-  test("validates the forwarded public Host when a proxy rewrites upstream Host", () => {
-    const c = cfg({ publicHosts: ["relay.example.ts.net"] });
-    expect(
-      checkAccess(
-        authedReq({
-          host: "127.0.0.1:8787",
-          origin: "https://relay.example.ts.net",
-          "x-forwarded-for": "100.64.0.8",
-          "x-forwarded-host": "relay.example.ts.net",
-        }),
-        c,
-        "write",
-      ),
-    ).toEqual({ ok: true });
-  });
-
-  test("ignores a forged forwarded Host when the immutable Host is not loopback", () => {
-    expect(
-      checkAccess(
-        req({ host: "attacker.example", "x-forwarded-host": "relay.example.ts.net" }),
-        cfg({ publicHosts: ["relay.example.ts.net"] }),
-      ),
-    ).toEqual({ ok: false, reason: "host not allowed" });
-  });
-});
-
-describe("isHostAllowed", () => {
-  test("loopback forms are always allowed", () => {
-    const c = cfg({ publicHosts: ["a.ts.net"] });
-    expect(isHostAllowed("127.0.0.1:8787", c)).toBe(true);
-    expect(isHostAllowed("localhost", c)).toBe(true);
-    expect(isHostAllowed("[::1]:8787", c)).toBe(true);
-  });
-
-  test("configured public host and allowed-origin host pass; anything else fails", () => {
-    const c = cfg({ publicHosts: ["a.ts.net"], allowedOrigins: ["https://b.example.com"] });
-    expect(isHostAllowed("a.ts.net", c)).toBe(true);
-    expect(isHostAllowed("b.example.com", c)).toBe(true);
-    expect(isHostAllowed("evil.com", c)).toBe(false);
-    expect(isHostAllowed("", c)).toBe(false);
-  });
-
-  test("a forged loopback Host is not trusted when the bridge binds a public interface", () => {
-    const c = cfg({ host: "0.0.0.0", publicHosts: ["relay.example.ts.net"] });
-    expect(isHostAllowed("127.0.0.1:8787", c)).toBe(false);
-    expect(isHostAllowed("relay.example.ts.net", c)).toBe(false);
-    expect(
-      checkAccess(req({ host: "127.0.0.1:8787" }), c, "write"),
-    ).toEqual({ ok: false, reason: "host not allowed" });
-    expect(deviceAuth(req({ host: "127.0.0.1:8787" }), { ...c, deviceHeader: "x-device-id" })).toEqual({
-      enforced: true,
-      device: null,
-      authorized: false,
-    });
-    expect(deviceAuth(req({ host: "relay.example.ts.net", "x-device-id": "phone" }), {
-      ...c,
-      deviceHeader: "x-device-id",
-      deviceAllowlist: ["phone"],
-    })).toEqual({ enforced: true, device: "phone", authorized: false });
+  test("rejects arbitrary browser origins/Host/proxy claims and permits explicitly approved origins", async () => {
+    const config = await cfg({ allowedOrigins: ["https://ade.test"] });
+    expect(checkAccess(req({ origin: "https://evil.test" }), config).ok).toBe(false);
+    expect(checkAccess(req({ host: "evil.test" }), config).ok).toBe(false);
+    expect(checkAccess(req({ "tailscale-user-login": "owner@test" }), config).ok).toBe(false);
+    expect(checkAccess(req({ origin: "https://ade.test" }), config, "write")).toEqual({ ok: true });
+    expect(deviceAuth(req({ "x-device": "owner" }), config)).toEqual({ enforced: false, device: null, authorized: true });
   });
 });
 
@@ -1016,105 +659,5 @@ describe("parseLiveScrollMessage", () => {
     expect(parseLiveScrollMessage(
       '{"type":"scroll_pane","paneId":"w1:p1","direction":"down","lines":201}',
     )).toBeNull();
-  });
-});
-
-describe("deviceAuth — per-device authorisation", () => {
-  const HDR = "x-device-id";
-
-  test("feature off: not enforced, fully authorised regardless of any header", () => {
-    expect(deviceAuth(req({ host: "h" }), cfg())).toEqual({
-      enforced: false,
-      device: null,
-      authorized: true,
-    });
-    // A stray header value is ignored entirely when the feature is off.
-    expect(deviceAuth(req({ host: "h", "x-device-id": "phone" }), cfg())).toEqual({
-      enforced: false,
-      device: null,
-      authorized: true,
-    });
-  });
-
-  test("feature on, header absent: authorised and unchanged (on-host loopback operator)", () => {
-    const c = cfg({ deviceHeader: HDR, deviceAllowlist: ["phone"] });
-    expect(deviceAuth(req({ host: "127.0.0.1:8787" }), c)).toEqual({
-      enforced: true,
-      device: null,
-      authorized: true,
-    });
-    // A blank/whitespace header value is treated as absent, not as a device named "".
-    expect(deviceAuth(req({ host: "localhost:8787", "x-device-id": "  " }), c)).toEqual({
-      enforced: true,
-      device: null,
-      authorized: true,
-    });
-  });
-
-  test("feature on, header absent or blank on a public Host: read-only (fail-closed proxy path)", () => {
-    const c = cfg({ deviceHeader: HDR, deviceAllowlist: ["phone"] });
-    expect(deviceAuth(req({ host: "relay.example.ts.net" }), c)).toEqual({
-      enforced: true,
-      device: null,
-      authorized: false,
-    });
-    expect(deviceAuth(req({ host: "relay.example.ts.net", "x-device-id": "  " }), c)).toEqual({
-      enforced: true,
-      device: null,
-      authorized: false,
-    });
-  });
-
-  test("feature on, allowlisted device: authorised and attributed (header is trimmed)", () => {
-    const c = cfg({
-      trustedUser: "owner@example.com",
-      deviceHeader: HDR,
-      deviceAllowlist: ["phone", "laptop"],
-    });
-    expect(deviceAuth(req({
-      host: "relay.example.ts.net",
-      "tailscale-user-login": "owner@example.com",
-      "x-device-id": " phone ",
-    }), c)).toEqual({
-      enforced: true,
-      device: "phone",
-      authorized: true,
-    });
-  });
-
-  test("an allowlisted device header without verified proxy identity is read-only", () => {
-    const c = cfg({ deviceHeader: HDR, deviceAllowlist: ["phone"] });
-    expect(deviceAuth(req({ host: "relay.example.ts.net", "x-device-id": "phone" }), c)).toEqual({
-      enforced: true,
-      device: "phone",
-      authorized: false,
-    });
-  });
-
-  test("feature on, non-allowlisted device: read-only (attributed but not authorised)", () => {
-    const c = cfg({ deviceHeader: HDR, deviceAllowlist: ["phone"] });
-    expect(deviceAuth(req({ host: "h", "x-device-id": "intruder" }), c)).toEqual({
-      enforced: true,
-      device: "intruder",
-      authorized: false,
-    });
-  });
-
-  test("the 'unknown' sentinel is never authorised, even if it appears in the allowlist", () => {
-    const c = cfg({ deviceHeader: HDR, deviceAllowlist: ["unknown"] });
-    expect(deviceAuth(req({ host: "h", "x-device-id": "unknown" }), c)).toEqual({
-      enforced: true,
-      device: "unknown",
-      authorized: false,
-    });
-  });
-
-  test("feature on with an empty allowlist: every header-carrying device is read-only (fail-closed)", () => {
-    const c = cfg({ deviceHeader: HDR, deviceAllowlist: [] });
-    expect(deviceAuth(req({ host: "h", "x-device-id": "phone" }), c)).toEqual({
-      enforced: true,
-      device: "phone",
-      authorized: false,
-    });
   });
 });

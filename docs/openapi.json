@@ -2,13 +2,13 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Herdr Mobile Relay REST API",
-    "version": "2.0.4",
-    "description": "Lean Herdr HTTP API and optional terminal WebSocket. No bundled UI, browser push, or ACP endpoint."
+    "version": "3.0.0",
+    "description": "Owner-scoped HTTP/SSE and terminal WebSocket over a private Unix socket, reached through client-managed SSH. Filesystem management uses host SFTP. No TCP listener, ACP or PWA."
   },
   "servers": [
     {
-      "url": "/",
-      "description": "Relay HTTP origin"
+      "url": "http://localhost",
+      "description": "Logical HTTP origin over Unix socket/SSH, not a daemon TCP listener"
     }
   ],
   "tags": [
@@ -31,10 +31,6 @@
     {
       "name": "Interactions",
       "description": "Actual live waits from integrated hooks/extensions, not inferred transcript actions."
-    },
-    {
-      "name": "Directories",
-      "description": "Owner-authorized local folder picker, distinct from Herdr workspace creation."
     }
   ],
   "paths": {
@@ -61,7 +57,7 @@
             }
           },
           "403": {
-            "$ref": "#/components/responses/Forbidden"
+            "description": "Owner socket request-shape gate rejects browser origin, Host, proxy claims or missing native marker (plain text)."
           }
         }
       }
@@ -283,54 +279,6 @@
         "responses": {
           "200": {
             "$ref": "#/components/responses/Action"
-          }
-        }
-      }
-    },
-    "/api/pane/{paneId}/upload": {
-      "post": {
-        "tags": [
-          "Panes"
-        ],
-        "summary": "Store an image for an agent to reference",
-        "description": "Accepted image MIME types: PNG, JPEG, WebP, GIF. Maximum file size: 10 MiB. The returned host path is for local terminal use; do not expose it to untrusted remote clients.",
-        "parameters": [
-          {
-            "$ref": "#/components/parameters/PaneId"
-          },
-          {
-            "$ref": "#/components/parameters/Session"
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "multipart/form-data": {
-              "schema": {
-                "type": "object",
-                "required": [
-                  "file"
-                ],
-                "properties": {
-                  "file": {
-                    "type": "string",
-                    "format": "binary"
-                  }
-                }
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Stored upload",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/UploadResponse"
-                }
-              }
-            }
           }
         }
       }
@@ -580,76 +528,6 @@
         }
       }
     },
-    "/api/workspace/{workspaceId}/files": {
-      "get": {
-        "tags": [
-          "Workspace"
-        ],
-        "summary": "List bounded workspace files",
-        "parameters": [
-          {
-            "$ref": "#/components/parameters/WorkspaceId"
-          },
-          {
-            "$ref": "#/components/parameters/PaneIdQuery"
-          },
-          {
-            "$ref": "#/components/parameters/Session"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Workspace-relative entries",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/WorkspaceFiles"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/workspace/{workspaceId}/file": {
-      "get": {
-        "tags": [
-          "Workspace"
-        ],
-        "summary": "Read a bounded workspace file preview",
-        "parameters": [
-          {
-            "$ref": "#/components/parameters/WorkspaceId"
-          },
-          {
-            "name": "path",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "$ref": "#/components/parameters/PaneIdQuery"
-          },
-          {
-            "$ref": "#/components/parameters/Session"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "UTF-8 or base64 content",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/WorkspaceFile"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/api/workspace/{workspaceId}/git": {
       "get": {
         "tags": [
@@ -827,7 +705,7 @@
             }
           },
           "403": {
-            "description": "Existing host/origin/device access gate denied request (plain text)."
+            "description": "Owner socket request-shape gate rejects browser origin, Host, proxy claims or missing native marker (plain text)."
           }
         }
       }
@@ -922,7 +800,7 @@
             }
           },
           "403": {
-            "description": "Existing host/origin/device access gate denied request (plain text)."
+            "description": "Owner socket request-shape gate rejects browser origin, Host, proxy claims or missing native marker (plain text)."
           }
         },
         "requestBody": {
@@ -1058,7 +936,7 @@
             }
           },
           "403": {
-            "description": "Existing host/origin/device access gate denied request (plain text)."
+            "description": "Owner socket request-shape gate rejects browser origin, Host, proxy claims or missing native marker (plain text)."
           }
         }
       }
@@ -1161,7 +1039,7 @@
             }
           },
           "403": {
-            "description": "Existing host/origin/device access gate denied request (plain text)."
+            "description": "Owner socket request-shape gate rejects browser origin, Host, proxy claims or missing native marker (plain text)."
           }
         },
         "requestBody": {
@@ -1240,7 +1118,7 @@
             }
           },
           "403": {
-            "description": "Existing access gate denies request"
+            "description": "Owner socket request-shape gate rejects browser origin, Host, proxy claims or missing native marker (plain text)."
           },
           "405": {
             "description": "Method not allowed"
@@ -1379,7 +1257,7 @@
             }
           },
           "403": {
-            "description": "Existing access gate denies request"
+            "description": "Owner socket request-shape gate rejects browser origin, Host, proxy claims or missing native marker (plain text)."
           },
           "405": {
             "description": "Method not allowed"
@@ -1492,7 +1370,7 @@
             }
           },
           "403": {
-            "description": "Existing access gate denies request"
+            "description": "Owner socket request-shape gate rejects browser origin, Host, proxy claims or missing native marker (plain text)."
           },
           "405": {
             "description": "Method not allowed"
@@ -1655,7 +1533,7 @@
             }
           },
           "403": {
-            "description": "Existing access gate denied (plain text)"
+            "description": "Owner socket request-shape gate rejects browser origin, Host, proxy claims or missing native marker (plain text)."
           }
         }
       }
@@ -1817,420 +1695,7 @@
             }
           },
           "403": {
-            "description": "Existing access gate denied (plain text)"
-          }
-        }
-      }
-    },
-    "/api/directories": {
-      "get": {
-        "tags": [
-          "Directories"
-        ],
-        "description": "Owner-configured roots only; no symlink components, no Herdr workspace/agent mutation. See HTTP_DIRECTORIES.md for Linux support, root policy, limits and deduplication.",
-        "summary": "List approved roots or immediate child directories",
-        "parameters": [
-          {
-            "name": "session",
-            "in": "query",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "path",
-            "in": "query",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "limit",
-            "in": "query",
-            "schema": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 200,
-              "default": 100
-            }
-          },
-          {
-            "name": "cursor",
-            "in": "query",
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Roots without path; directory listing with path",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "oneOf": [
-                    {
-                      "$ref": "#/components/schemas/DirectoryRoots"
-                    },
-                    {
-                      "$ref": "#/components/schemas/DirectoryListing"
-                    }
-                  ]
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Structured filesystem/runtime error; Linux-only safe traversal in this increment",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/LifecycleError"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Structured filesystem/runtime error; Linux-only safe traversal in this increment; authorization gate may return plain text",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/LifecycleError"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Structured filesystem/runtime error; Linux-only safe traversal in this increment",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/LifecycleError"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "Structured filesystem/runtime error; Linux-only safe traversal in this increment",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/LifecycleError"
-                }
-              }
-            }
-          },
-          "413": {
-            "description": "Structured filesystem/runtime error; Linux-only safe traversal in this increment",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/LifecycleError"
-                }
-              }
-            }
-          },
-          "429": {
-            "description": "Structured filesystem/runtime error; Linux-only safe traversal in this increment",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/LifecycleError"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "Structured filesystem/runtime error; Linux-only safe traversal in this increment",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/LifecycleError"
-                }
-              }
-            }
-          },
-          "503": {
-            "description": "Structured filesystem/runtime error; Linux-only safe traversal in this increment",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/LifecycleError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "post": {
-        "tags": [
-          "Directories"
-        ],
-        "description": "Owner-configured roots only; no symlink components, no Herdr workspace/agent mutation. See HTTP_DIRECTORIES.md for Linux support, root policy, limits and deduplication.",
-        "summary": "Explicitly create one child directory",
-        "parameters": [
-          {
-            "name": "session",
-            "in": "query",
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": false,
-                "required": [
-                  "parentPath",
-                  "name",
-                  "requestId"
-                ],
-                "properties": {
-                  "parentPath": {
-                    "type": "string"
-                  },
-                  "name": {
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": 255
-                  },
-                  "requestId": {
-                    "type": "string",
-                    "pattern": "^[A-Za-z0-9._:-]{1,128}$"
-                  }
-                }
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Created, existing directory, or cached same-request result",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "required": [
-                    "ok",
-                    "path",
-                    "created"
-                  ],
-                  "properties": {
-                    "ok": {
-                      "const": true
-                    },
-                    "path": {
-                      "type": "string"
-                    },
-                    "created": {
-                      "type": "boolean"
-                    }
-                  }
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Structured filesystem/runtime error; Linux-only safe traversal in this increment",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/LifecycleError"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Structured filesystem/runtime error; Linux-only safe traversal in this increment; authorization gate may return plain text",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/LifecycleError"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Structured filesystem/runtime error; Linux-only safe traversal in this increment",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/LifecycleError"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "Structured filesystem/runtime error; Linux-only safe traversal in this increment",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/LifecycleError"
-                }
-              }
-            }
-          },
-          "413": {
-            "description": "Structured filesystem/runtime error; Linux-only safe traversal in this increment",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/LifecycleError"
-                }
-              }
-            }
-          },
-          "429": {
-            "description": "Structured filesystem/runtime error; Linux-only safe traversal in this increment",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/LifecycleError"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "Structured filesystem/runtime error; Linux-only safe traversal in this increment",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/LifecycleError"
-                }
-              }
-            }
-          },
-          "503": {
-            "description": "Structured filesystem/runtime error; Linux-only safe traversal in this increment",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/LifecycleError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/directories/validate": {
-      "get": {
-        "tags": [
-          "Directories"
-        ],
-        "description": "Owner-configured roots only; no symlink components, no Herdr workspace/agent mutation. See HTTP_DIRECTORIES.md for Linux support, root policy, limits and deduplication.",
-        "summary": "Validate an existing cwd without creating anything",
-        "parameters": [
-          {
-            "name": "session",
-            "in": "query",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "path",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/DirectoryValidation"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Structured filesystem/runtime error; Linux-only safe traversal in this increment",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/LifecycleError"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Structured filesystem/runtime error; Linux-only safe traversal in this increment; authorization gate may return plain text",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/LifecycleError"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Structured filesystem/runtime error; Linux-only safe traversal in this increment",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/LifecycleError"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "Structured filesystem/runtime error; Linux-only safe traversal in this increment",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/LifecycleError"
-                }
-              }
-            }
-          },
-          "413": {
-            "description": "Structured filesystem/runtime error; Linux-only safe traversal in this increment",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/LifecycleError"
-                }
-              }
-            }
-          },
-          "429": {
-            "description": "Structured filesystem/runtime error; Linux-only safe traversal in this increment",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/LifecycleError"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "Structured filesystem/runtime error; Linux-only safe traversal in this increment",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/LifecycleError"
-                }
-              }
-            }
-          },
-          "503": {
-            "description": "Structured filesystem/runtime error; Linux-only safe traversal in this increment",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/LifecycleError"
-                }
-              }
-            }
+            "description": "Owner socket request-shape gate rejects browser origin, Host, proxy claims or missing native marker (plain text)."
           }
         }
       }
@@ -2290,7 +1755,7 @@
     },
     "responses": {
       "Forbidden": {
-        "description": "Access, origin, identity, or device authorization was rejected.",
+        "description": "Owner socket browser/tunnel request-shape check was rejected.",
         "content": {
           "application/json": {
             "schema": {
@@ -2388,28 +1853,6 @@
             "$ref": "#/components/schemas/RequestId"
           }
         }
-      },
-      "UploadResponse": {
-        "oneOf": [
-          {
-            "type": "object",
-            "required": [
-              "ok",
-              "path"
-            ],
-            "properties": {
-              "ok": {
-                "const": true
-              },
-              "path": {
-                "type": "string"
-              }
-            }
-          },
-          {
-            "$ref": "#/components/schemas/Error"
-          }
-        ]
       },
       "CreateTabRequest": {
         "type": "object",
@@ -2618,65 +2061,6 @@
               "agent",
               "shell"
             ]
-          }
-        }
-      },
-      "WorkspaceFiles": {
-        "type": "object",
-        "properties": {
-          "workspaceId": {
-            "type": "string"
-          },
-          "root": {
-            "type": "string"
-          },
-          "entries": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "path": {
-                  "type": "string"
-                },
-                "kind": {
-                  "type": "string",
-                  "enum": [
-                    "file",
-                    "directory"
-                  ]
-                }
-              }
-            }
-          },
-          "truncated": {
-            "type": "boolean"
-          }
-        }
-      },
-      "WorkspaceFile": {
-        "type": "object",
-        "properties": {
-          "workspaceId": {
-            "type": "string"
-          },
-          "path": {
-            "type": "string"
-          },
-          "mediaType": {
-            "type": "string"
-          },
-          "encoding": {
-            "type": "string",
-            "enum": [
-              "utf8",
-              "base64"
-            ]
-          },
-          "content": {
-            "type": "string"
-          },
-          "size": {
-            "type": "integer"
           }
         }
       },
@@ -3089,119 +2473,6 @@
             }
           }
         }
-      },
-      "DirectoryRoots": {
-        "type": "object",
-        "required": [
-          "roots"
-        ],
-        "properties": {
-          "roots": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "required": [
-                "name",
-                "path"
-              ],
-              "properties": {
-                "name": {
-                  "type": "string"
-                },
-                "path": {
-                  "type": "string"
-                }
-              }
-            }
-          }
-        }
-      },
-      "DirectoryListing": {
-        "type": "object",
-        "required": [
-          "path",
-          "parentPath",
-          "directories",
-          "nextCursor"
-        ],
-        "properties": {
-          "path": {
-            "type": "string"
-          },
-          "parentPath": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "directories": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "required": [
-                "name",
-                "path"
-              ],
-              "properties": {
-                "name": {
-                  "type": "string"
-                },
-                "path": {
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "nextCursor": {
-            "type": [
-              "string",
-              "null"
-            ]
-          }
-        }
-      },
-      "DirectoryValidation": {
-        "type": "object",
-        "required": [
-          "path",
-          "valid",
-          "reason"
-        ],
-        "properties": {
-          "path": {
-            "type": "string"
-          },
-          "valid": {
-            "type": "boolean"
-          },
-          "reason": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "enum": [
-              null,
-              "not_found",
-              "not_directory",
-              "not_accessible",
-              "outside_allowed_roots"
-            ]
-          }
-        }
-      }
-    },
-    "securitySchemes": {
-      "TailscaleServeIdentity": {
-        "type": "apiKey",
-        "in": "header",
-        "name": "Tailscale-User-Login",
-        "description": "Injected by Tailscale Serve for remote traffic. Do not manufacture this header; configure `HERDR_RELAY_TRUSTED_USER` on the relay."
-      },
-      "NativeMutation": {
-        "type": "apiKey",
-        "in": "header",
-        "name": "X-Herdr-Client",
-        "description": "Set to `herdr-mobile-v1` only for a native non-browser mutation without an Origin header. Browser requests use same-origin protection instead."
       }
     }
   }

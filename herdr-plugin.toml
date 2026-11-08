@@ -1,8 +1,8 @@
 id = "rad.herdr-mobile-relay"
 name = "Herdr Mobile Relay"
-version = "2.0.4"
+version = "3.0.0"
 min_herdr_version = "0.7.0"
-description = "Lean Herdr management relay: native status/events, terminal streaming, and management APIs over Tailscale"
+description = "Owner-scoped Herdr and native agent HTTP relay over Unix socket for SSH clients"
 platforms = ["linux", "macos"]
 
 # This plugin is a thin launcher. The actual bridge runs as a systemd user service on Linux or a
@@ -35,8 +35,7 @@ title = "Restart bridge"
 contexts = ["workspace"]
 command = ["bash", "scripts/relay-ctl.sh", "restart"]
 
-# Full teardown: stops + disables the service, removes the systemd --user unit, and resets
-# tailscale serve. Leaves the .env and the checkout (so `start` can bring it right back). See
+# Full teardown: stops + disables the service and removes its service definition. Leaves the .env and the checkout (so `start` can bring it right back). See
 # scripts/relay-ctl.sh → cmd_uninstall.
 [[actions]]
 id = "uninstall"
@@ -53,10 +52,10 @@ contexts = ["workspace"]
 command = ["bash", "scripts/relay-ctl.sh", "update"]
 
 [[actions]]
-id = "url"
-title = "Show bridge URL"
+id = "socket"
+title = "Show relay socket"
 contexts = ["workspace"]
-command = ["bash", "scripts/relay-ctl.sh", "url"]
+command = ["bash", "scripts/relay-ctl.sh", "socket"]
 
 [[actions]]
 id = "status"

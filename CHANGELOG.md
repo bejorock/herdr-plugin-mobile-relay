@@ -1,5 +1,19 @@
 # Changelog
 
+## [3.0.0] - 2026-11-08
+
+### Changed
+
+- Socket-only HTTP/SSE/terminal WebSocket daemon for owner-managed SSH forwarding. No relay TCP listener or Tailscale Serve integration; SSH security is owned by client/operator.
+- Replace proxy identity/device authorization with owner-private socket authority plus Host/Origin/native-client browser/tunnel safeguards.
+- Use host SFTP for generic files/folders: remove custom directory backend, generic workspace file listing/preview and pane uploads; retain Herdr topology, Git status/diff and native transcript APIs.
+- Simplify Linux/macOS service tooling around socket readiness, 0077 umask and explicit socket path. Existing settings/state are not silently migrated/deleted.
+
+### Validated
+
+- Actual Unix HTTP, SSE and WebSocket tests, active/stale socket ownership and cleanup; real isolated OpenSSH forwarding of HTTP/SSE/WebSocket and SFTP folder create/list/remove on Linux.
+- No production restart, host SSH configuration change or personal agent-settings mutation. macOS/live-mobile/reconnect acceptance remains pending.
+
 ## [2.0.4] - 2026-11-07
 
 ### Added

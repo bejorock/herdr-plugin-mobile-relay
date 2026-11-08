@@ -1,5 +1,6 @@
 # HTTP transcript and Herdr event increment
 
+**Transport update:** HTTP/SSE now runs on an owner-private Unix socket via SSH; generic filesystem operations use SFTP. See [SSH transport](SSH_TRANSPORT.md). Old TCP/Tailscale/device-policy references in historical evidence are not current authorization.
 Implemented on `lean-relay` (2.0.2). Automated and native-read/event evidence is recorded below. No ACP. Terminal WebSocket `/api/live` remains separate.
 
 All endpoints use existing read authorization and runtime isolation. No GET launches/resumes an agent or submits a prompt. Application credentials are not accepted in query strings.
@@ -34,7 +35,7 @@ Native event names are preserved (for Herdr 0.9.5, observed names include `tab_c
 
 A bounded per-runtime in-memory relay ring supports `Last-Event-ID` reconnect during one process lifetime. It is NOT durable Herdr history, does not recover events before upstream subscription and has no shared sequence boundary with snapshots. Treat events as invalidations for authoritative reads. Runtime name never becomes a filesystem path. No arbitrary event-name subscription supplied by clients in this increment; the supported subset follows EventPoker lifecycle and agent-status subscriptions. No actionable question/permission events are emitted yet.
 
-HTTP/SSE caps and sanitized errors are documented in OpenAPI. Multiple streams are bounded globally and per resource; resource release occurs on request abort, client cancellation, duration timeout or server shutdown. Read-only clients may observe, never mutate.
+HTTP/SSE caps and sanitized errors are documented in OpenAPI. Multiple streams are bounded globally and per resource; resource release occurs on request abort, client cancellation, duration timeout or server shutdown. Clients authorized to the owner socket have owner authority; the ADE controls its own member/read-only permissions.
 
 ## Validation evidence (2026-11-07)
 

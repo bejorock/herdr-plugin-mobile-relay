@@ -1,6 +1,8 @@
 # HTTP lifecycle — first increment contract
 
 **Transport update:** HTTP/SSE now runs on an owner-private Unix socket via SSH; generic filesystem operations use SFTP. See [SSH transport](SSH_TRANSPORT.md). Old TCP/Tailscale/device-policy references in historical evidence are not current authorization.
+See [HTTP agent operations](HTTP_AGENT_OPERATIONS.md) for implemented public attach, semantic prompts and enhanced discovery; those supersede initial-increment limitations below where noted.
+
 Status: implemented first-increment contract for discovery and native conversation creation/restoration on `lean-relay`. [Live Pi/Claude HTTP validation](HTTP_LIFECYCLE_LIVE_VALIDATION.md) covers ordinary create/restart/exit/pane-close restoration and native context recall; fault-injected launch ambiguity remains automated mocked coverage. No ACP methods or envelopes. Transcript/event/interaction and folder endpoints are separate increments.
 
 All routes use owner socket authority and Host/Origin/native-client request-shape checks. `?session=<name>` selects a discovered Herdr runtime; omitted selects primary. Unknown runtime: 404 `runtime_unknown`; unreachable: 503 `runtime_unavailable`. Errors use `{ "error": { "code": "machine_code", "message": "bounded explanation" } }` without native IDs/paths or raw backend errors.
@@ -29,13 +31,13 @@ Other errors: 400 `invalid_request`/`invalid_cwd`, 409 `create_pending`/`restore
 
 ## Limits and retention
 
-Initial increment does not accept arbitrary CLI args, MCP configuration, credentials, historical ACP IDs or client-supplied native references. It does not add another prompt API: use existing Herdr-facing operations until the semantic prompt route is specified. No auto-restore during reads. Restoring a conversation does not reestablish expired callbacks. Transcript replay is separate, not part of the resume response.
+Initial increment does not accept arbitrary CLI args, MCP configuration, credentials, historical ACP IDs or client-supplied native references. Semantic prompts use the single Herdr-backed HTTP operation documented in HTTP_AGENT_OPERATIONS.md; raw terminal input remains a distinct manual interface. No auto-restore during reads. Restoring a conversation does not reestablish expired callbacks. Transcript replay is separate, not part of the resume response.
 
 Private state uses owner-only permissions and atomic replacement. Persistence errors propagate. Records/dedupe keys survive ordinary pane closure and relay restart; no automatic expiry or public deletion in this increment. Operators must stop the relay before editing/removing the private store; removal discards restore/dedupe mappings, not native transcripts. Bound record count and reject new creates at capacity, never evict active recovery handles silently.
 
 ## Remaining gaps
 
-No attach-existing endpoint yet. Harness availability backed only by installed-hook evidence remains `unknown`; exact launcher verification in Herdr's environment is not implemented. Initial launch interruptions before native identity was persisted require operator intervention rather than automatic adoption by pane ID. No automatic retry of unresolved launch allocations. Native transcript validation currently assumes default Pi/Claude storage roots and requires matching saved cwd evidence; custom agent config roots need explicit support. Agent exit with stale native metadata/not-ready status may conservatively return `restore_pending` instead of launching. Those limits require live investigation, not weakening identity checks.
+Public attach-existing and semantic prompt endpoints are implemented; discovery uses fresh live agents or optional owner-attested launcher PATH. Installed-hook-only evidence still remains `unknown` without sufficient context. Initial launch interruptions before native identity was persisted require operator intervention rather than automatic adoption by pane ID. No automatic retry of unresolved launch allocations. Native transcript validation currently assumes default Pi/Claude storage roots and requires matching saved cwd evidence; custom agent config roots need explicit support. Agent exit with stale native metadata/not-ready status may conservatively return `restore_pending` instead of launching. Those limits require live investigation, not weakening identity checks.
 
 ## Evidence required
 

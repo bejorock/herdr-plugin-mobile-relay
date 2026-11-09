@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Herdr Mobile Relay REST API",
-    "version": "3.0.0",
+    "version": "3.0.1",
     "description": "Owner-scoped HTTP/SSE and terminal WebSocket over a private Unix socket, reached through client-managed SSH. Filesystem management uses host SFTP. No TCP listener, ACP or PWA."
   },
   "servers": [
@@ -621,7 +621,7 @@
           "Conversations"
         ],
         "summary": "Discover Pi and Claude using Herdr integration evidence",
-        "description": "See HTTP_LIFECYCLE.md for identity, failure, retention and interrupted-launch semantics. No ACP.",
+        "description": "Herdr integration metadata plus fresh running-agent evidence or optional owner-attested HERDR_RELAY_AGENT_PATH executable checks. No process/model/shell/version probes. Unknown without sufficient evidence.",
         "parameters": [
           {
             "name": "session",
@@ -1696,6 +1696,262 @@
           },
           "403": {
             "description": "Owner socket request-shape gate rejects browser origin, Host, proxy claims or missing native marker (plain text)."
+          }
+        }
+      }
+    },
+    "/api/conversations/attach": {
+      "post": {
+        "tags": [
+          "Conversations"
+        ],
+        "summary": "Attach an existing live native conversation without launching",
+        "description": "Unix socket HTTP; native marker required. See HTTP_AGENT_OPERATIONS.md for identity, dedupe and delivery semantics.",
+        "parameters": [
+          {
+            "name": "session",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "paneId",
+                  "kind",
+                  "cwd"
+                ],
+                "properties": {
+                  "paneId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  },
+                  "kind": {
+                    "enum": [
+                      "pi",
+                      "claude"
+                    ]
+                  },
+                  "cwd": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Structured native-operation failure; prompt_delivery_unconfirmed must not be blindly retried",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Structured native-operation failure; prompt_delivery_unconfirmed must not be blindly retried",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Structured native-operation failure; prompt_delivery_unconfirmed must not be blindly retried",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Structured native-operation failure; prompt_delivery_unconfirmed must not be blindly retried",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Structured native-operation failure; prompt_delivery_unconfirmed must not be blindly retried",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner socket request-shape gate rejected request"
+          }
+        }
+      }
+    },
+    "/api/conversations/{conversationId}/prompt": {
+      "post": {
+        "tags": [
+          "Conversations"
+        ],
+        "summary": "Submit one semantic prompt through Herdr (not completed execution)",
+        "description": "Unix socket HTTP; native marker required. See HTTP_AGENT_OPERATIONS.md for identity, dedupe and delivery semantics.",
+        "parameters": [
+          {
+            "name": "session",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "conversationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "text",
+                  "requestId"
+                ],
+                "properties": {
+                  "text": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Maximum 128 KiB UTF-8; non-whitespace"
+                  },
+                  "requestId": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9._:-]{1,128}$"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "conversationId",
+                    "requestId",
+                    "delivered",
+                    "completion"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": true
+                    },
+                    "conversationId": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "delivered": {
+                      "const": true
+                    },
+                    "completion": {
+                      "const": "unknown"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Structured native-operation failure; prompt_delivery_unconfirmed must not be blindly retried",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Structured native-operation failure; prompt_delivery_unconfirmed must not be blindly retried",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Structured native-operation failure; prompt_delivery_unconfirmed must not be blindly retried",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Structured native-operation failure; prompt_delivery_unconfirmed must not be blindly retried",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Structured native-operation failure; prompt_delivery_unconfirmed must not be blindly retried",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner socket request-shape gate rejected request"
           }
         }
       }

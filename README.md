@@ -11,7 +11,7 @@ ADE native layer/backend → SSH
 ## Capabilities
 
 - Herdr runtime snapshots, workspace/tab/pane/worktree management and structured Git status/diff inspection.
-- HTTP Pi/Claude discovery and conversation create/read/resume with private native identity and retry safeguards.
+- HTTP Pi/Claude discovery and conversation create/attach/read/resume/semantic prompt with private native identity and persisted retry safeguards.
 - HTTP native transcript history/following; native tool content stays client-rendered.
 - HTTP pending question/permission reads, response delivery and actionable SSE events through explicit Pi/Claude adapters.
 - Optional terminal WebSocket `/api/live`, distinct from native transcript streaming.
@@ -64,11 +64,12 @@ Backups and targeted legacy migration preserve unrelated and Herdr-owned integra
 - [HTTP OpenAPI](docs/openapi.json)
 - [Terminal WebSocket](docs/DEVELOPER_API.md)
 - [Conversation lifecycle](docs/HTTP_LIFECYCLE.md) and [native live evidence](docs/HTTP_LIFECYCLE_LIVE_VALIDATION.md)
+- [Public attach, semantic prompts and discovery evidence](docs/HTTP_AGENT_OPERATIONS.md)
 - [Transcripts and Herdr SSE](docs/HTTP_STREAMS.md)
 - [Native interactions and live evidence](docs/HTTP_INTERACTIONS.md)
 - [Architecture](docs/ARCHITECTURE.md) and [revamp history](docs/LEAN_RELAY_REVAMP.md)
 
-Discovery still reports unknown when Herdr only proves installed hooks. Public attach-existing remains pending (hook registration can attach a proven native requester internally). Existing live Pi/Claude evidence predates the SSH transport migration; see transport documentation for current validation limits.
+Discovery uses fresh running-agent evidence or optional owner-attested `HERDR_RELAY_AGENT_PATH`. Without either, installed-hook-only evidence remains honestly unknown; it does not execute shell/model/version probes. Public attach and semantic prompt paths are live-validated over the Unix socket for Pi/Claude, including retries after restart. macOS execution, arbitrary extension interception and direct separate-child ownership still require validation/integration; no SSH/SFTP client work belongs to this relay.
 
 ## Checkpoints
 

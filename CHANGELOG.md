@@ -1,5 +1,17 @@
 # Changelog
 
+## [3.0.1] - 2026-11-09
+
+### Added
+
+- Public HTTP attachment of existing Pi/Claude native conversations and semantic prompt submission through Herdr, with identity/cwd checks, serialized mutations and persisted request-ID delivery journal.
+- Discovery backed by fresh running-agent evidence or explicit owner-attested `HERDR_RELAY_AGENT_PATH` executable checks; no daemon-PATH assumptions, shell/model/version probes or hidden launch.
+
+### Validated
+
+- Real Pi/Claude attach/prompt over Unix HTTP, transcript proof, repeat/restart deduplication and running-agent discovery. Production/SSH/personal agent settings unchanged.
+- Automated blocked/ambiguous prompt failures never blindly resend; macOS execution and arbitrary nested-extension support remain outside validated scope.
+
 ## [3.0.0] - 2026-11-08
 
 ### Changed

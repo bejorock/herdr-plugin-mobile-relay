@@ -1,6 +1,6 @@
 id = "rad.herdr-mobile-relay"
 name = "Herdr Mobile Relay"
-version = "3.0.0"
+version = "3.0.1"
 min_herdr_version = "0.7.0"
 description = "Owner-scoped Herdr and native agent HTTP relay over Unix socket for SSH clients"
 platforms = ["linux", "macos"]

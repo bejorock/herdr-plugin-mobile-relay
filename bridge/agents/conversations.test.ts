@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, readFile, rm, stat, writeFile, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { HerdrRpcError } from "../wire.ts";
 import { ConversationService, ConversationStore, LifecycleError, type NativeAccess } from "./conversations.ts";
 import type { SessionRegistry, SessionRuntime } from "../sessions.ts";
 import type { AgentInfo } from "../herdr-client.ts";
@@ -56,6 +57,35 @@ describe("HTTP conversation lifecycle (mocked Herdr/native access)", () => {
       const restarted = new ConversationService(h.registry, new ConversationStore(h.dir), h.access);
       expect((await restarted.resume(created.id, "/repo")).id).toBe(created.id);
       expect(h.starts).toBe(1); expect(h.prompts).toBe(0);
+    });
+    test(`${kind}: public attach reuses persisted identity and rejects kind/cwd mismatches`, async () => {
+      const h = await harness(kind); const created = await h.service.create(input(kind));
+      const attached = await h.service.attach({ paneId: created.paneId!, kind, cwd: "/repo" });
+      expect(attached.id).toBe(created.id);
+      const all = await Promise.all(Array.from({ length: 3 }, () => h.service.attach({ paneId: created.paneId!, kind, cwd: "/repo" })));
+      expect(all.every((v) => v.id === created.id)).toBe(true); expect(h.starts).toBe(1); expect(h.prompts).toBe(0);
+      await expect(h.service.attach({ paneId: created.paneId!, kind, cwd: "/wrong" })).rejects.toMatchObject({ code: "cwd_mismatch" });
+      await expect(h.service.attach({ paneId: created.paneId!, kind: kind === "pi" ? "claude" : "pi", cwd: "/repo" })).rejects.toMatchObject({ code: "native_identity_mismatch" });
+    });
+    test(`${kind}: semantic prompt calls Herdr once, dedupes across restart and never stores prompt text`, async () => {
+      const h = await harness(kind); const created = await h.service.create(input(kind));
+      const results = await Promise.all(Array.from({ length: 4 }, () => h.service.prompt(created.id, "private prompt text", "p1")));
+      expect(results.every((v) => v.delivered && v.completion === "unknown")).toBe(true); expect(h.prompts).toBe(1);
+      const restarted = new ConversationService(h.registry, new ConversationStore(h.dir), h.access);
+      expect(await restarted.prompt(created.id, "private prompt text", "p1")).toEqual(results[0]); expect(h.prompts).toBe(1);
+      expect(await readFile(join(h.dir, "prompt-requests.json"), "utf8")).not.toContain("private prompt text");
+      await expect(h.service.prompt(created.id, "different", "p1")).rejects.toMatchObject({ code: "request_id_conflict" });
+    });
+    test(`${kind}: uncertain semantic submission is not retried; definitive blocked rejection stays clear`, async () => {
+      const h = await harness(kind); const created = await h.service.create(input(kind)); let calls = 0;
+      h.runtime.herdr.promptAgent = async () => { calls++; throw new Error("lost acknowledgement"); };
+      await expect(h.service.prompt(created.id, "text", "p1")).rejects.toMatchObject({ code: "prompt_delivery_unconfirmed" });
+      const restarted = new ConversationService(h.registry, new ConversationStore(h.dir), h.access);
+      await expect(restarted.prompt(created.id, "text", "p1")).rejects.toMatchObject({ code: "prompt_delivery_unconfirmed" }); expect(calls).toBe(1);
+      h.runtime.herdr.promptAgent = async () => { calls++; throw new HerdrRpcError("agent.prompt", "agent_blocked", "sensitive native detail"); };
+      await expect(h.service.prompt(created.id, "new text", "p2")).rejects.toMatchObject({ code: "agent_blocked" });
+      await expect(h.service.prompt(created.id, "new text", "p2")).rejects.toMatchObject({ code: "agent_blocked" }); expect(calls).toBe(2);
+      h.agents.clear(); await expect(h.service.prompt(created.id, "new text", "p3")).rejects.toMatchObject({ code: "conversation_closed" }); expect(h.starts).toBe(1);
     });
     test(`${kind}: pane closure followed by concurrent restores launches once and preserves public ID`, async () => {
       const h = await harness(kind); const created = await h.service.create(input(kind));
@@ -122,6 +152,16 @@ describe("HTTP conversation lifecycle (mocked Herdr/native access)", () => {
     expect(h.starts).toBe(0); expect(h.prompts).toBe(0);
     await expect(h.service.discover("missing")).rejects.toMatchObject({ code: "runtime_unknown" });
     h.setConnected(false); await expect(h.service.discover()).rejects.toMatchObject({ code: "runtime_unavailable" });
+  });
+  test("owner-attested launcher PATH and fresh running evidence improve discovery without launching", async () => {
+    const h = await harness(); const bin = join(h.dir, "bin");
+    await (await import("node:fs/promises")).mkdir(bin);
+    await writeFile(join(bin, "pi"), "#!/bin/sh\necho must-not-run\n", { mode: 0o700 });
+    const service = new ConversationService(h.registry, h.store, h.access, [bin]);
+    expect((await service.discover()).agents.map((v) => v.availability)).toEqual(["available", "unavailable"]);
+    await service.create(input("pi"));
+    expect((await h.service.discover()).agents[0]?.availability).toBe("available");
+    expect(h.starts).toBe(1); expect(h.prompts).toBe(0);
   });
   test("discovery reports both/one/neither/unknown with no model activity", async () => {
     const h = await harness();

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { loadConfig } from "./config.ts";
-const keys = ["HERDR_PLUGIN_STATE_DIR", "HERDR_RELAY_STATE_DIR", "HERDR_RELAY_SOCKET", "HERDR_SOCKET_PATH", "HERDR_RELAY_ALLOWED_ORIGINS", "HERDR_RELAY_POLL_MS", "HERDR_RELAY_POLL_IDLE_MS", "HERDR_RELAY_READ_LINES", "HERDR_RELAY_SUBMIT_KEYS", "HERDR_RELAY_MULTI_SESSION"];
+const keys = ["HERDR_PLUGIN_STATE_DIR", "HERDR_RELAY_STATE_DIR", "HERDR_RELAY_SOCKET", "HERDR_SOCKET_PATH", "HERDR_RELAY_ALLOWED_ORIGINS", "HERDR_RELAY_AGENT_PATH", "HERDR_RELAY_POLL_MS", "HERDR_RELAY_POLL_IDLE_MS", "HERDR_RELAY_READ_LINES", "HERDR_RELAY_SUBMIT_KEYS", "HERDR_RELAY_MULTI_SESSION"];
 let saved: Array<string | undefined>;
 beforeEach(() => { saved = keys.map((key) => process.env[key]); keys.forEach((key) => delete process.env[key]); });
 afterEach(() => keys.forEach((key, i) => { if (saved[i] === undefined) delete process.env[key]; else process.env[key] = saved[i]; }));
@@ -20,6 +20,11 @@ describe("socket-only configuration", () => {
     process.env.HERDR_RELAY_SOCKET = "/tmp/relay.sock";
     for (const origin of ["*", "null", "https://example.test/path", "https://example.test/"]) { process.env.HERDR_RELAY_ALLOWED_ORIGINS = origin; expect(() => loadConfig()).toThrow(); }
     process.env.HERDR_RELAY_ALLOWED_ORIGINS = "https://ade.example.test"; expect(loadConfig().allowedOrigins).toEqual(["https://ade.example.test"]);
+  });
+  test("launcher PATH is explicit owner evidence, never inferred from service PATH", () => {
+    expect(loadConfig().agentPath).toBeUndefined();
+    process.env.HERDR_RELAY_AGENT_PATH = "/home/u/bin:/usr/bin"; expect(loadConfig().agentPath).toEqual(["/home/u/bin", "/usr/bin"]);
+    for (const value of ["", "relative", "/usr/bin:"]) { process.env.HERDR_RELAY_AGENT_PATH = value; expect(() => loadConfig()).toThrow(); }
   });
   test("preserves bounded polling/read limits and multi-runtime switch", () => {
     process.env.HERDR_RELAY_POLL_MS = "10junk"; process.env.HERDR_RELAY_READ_LINES = "10001";

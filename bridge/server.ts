@@ -280,7 +280,7 @@ export async function startServer(opts: {
   const { cfg, registry, audit, liveUpdates } = opts;
   // Tests may inject a service; production uses its owner-only journal.
   let conversations = opts.conversations;
-  const lifecycle = () => conversations ??= new ConversationService(registry, new ConversationStore(cfg.stateDir));
+  const lifecycle = () => conversations ??= new ConversationService(registry, new ConversationStore(cfg.stateDir), undefined, cfg.agentPath);
   let transcripts = opts.transcripts;
   const history = () => transcripts ??= new TranscriptService(lifecycle());
   const streams = new HttpStreams();
@@ -389,6 +389,30 @@ export async function startServer(opts: {
           return secure(new Response(JSON.stringify({ error: { code: failure.code, message: failure.message } }), {
             status: failure.status, headers: { "content-type": "application/json; charset=utf-8" },
           }));
+        }
+      }
+
+      if (pathname === "/api/conversations/attach" || /^\/api\/conversations\/[^/]+\/prompt$/.test(pathname)) {
+        const denied = guard(req, cfg, "write"); if (denied) return denied;
+        if (req.method !== "POST") return text("method not allowed", 405);
+        try {
+          let body: unknown;
+          try { body = await req.json(); } catch { throw new LifecycleError(400, "invalid_request", "Expected a JSON object"); }
+          if (!isJsonObject(body)) throw new LifecycleError(400, "invalid_request", "Expected an object");
+          if (pathname === "/api/conversations/attach") {
+            if (Object.keys(body).some((key) => !["paneId", "kind", "cwd"].includes(key)) || typeof body.paneId !== "string" || !body.paneId || body.paneId.length > 256 || (body.kind !== "pi" && body.kind !== "claude") || typeof body.cwd !== "string") throw new LifecycleError(400, "invalid_request", "Explicit paneId, kind and cwd are required");
+            const conversation = await lifecycle().attach({ session: sessionName, paneId: body.paneId, kind: body.kind, cwd: body.cwd });
+            audit.record({ action: "conversation.attach", session: conversation.session, paneId: conversation.paneId ?? undefined, detail: { conversationId: conversation.id, kind: conversation.kind } });
+            return json({ conversation }, req.headers.get("accept-encoding"));
+          }
+          const id = pathname.split("/")[3]!;
+          if (Object.keys(body).some((key) => !["text", "requestId"].includes(key)) || typeof body.text !== "string" || typeof body.requestId !== "string" || !REQUEST_ID.test(body.requestId)) throw new LifecycleError(400, "invalid_request", "Prompt text and requestId are required");
+          const result = await lifecycle().prompt(id, body.text, body.requestId, sessionName);
+          audit.record({ action: "conversation.prompt", session: sessionName, detail: { conversationId: id, requestId: body.requestId, textChars: body.text.length, outcome: "delivered" } });
+          return json(result, req.headers.get("accept-encoding"));
+        } catch (error) {
+          const failure = error instanceof LifecycleError ? error : new LifecycleError(500, "internal_error", "Agent operation failed");
+          return secure(new Response(JSON.stringify({ error: { code: failure.code, message: failure.message } }), { status: failure.status, headers: { "content-type": "application/json; charset=utf-8" } }));
         }
       }
 

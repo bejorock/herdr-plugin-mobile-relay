@@ -35,6 +35,8 @@ export interface Config {
   multiSession: boolean;
   /** Optional exact browser origins; default none. SSH itself is managed by the owner/client. */
   allowedOrigins: string[];
+  /** Explicit owner-attested Herdr launcher PATH; never inferred from Bun's service PATH. */
+  agentPath?: string[];
 }
 export function loadConfig(): Config {
   const stateDir = process.env.HERDR_PLUGIN_STATE_DIR ?? process.env.HERDR_RELAY_STATE_DIR ?? join(homedir(), ".local", "state", "rad-herdr-mobile-relay");
@@ -47,10 +49,13 @@ export function loadConfig(): Config {
     const parsed = new URL(origin);
     if (!["http:", "https:"].includes(parsed.protocol) || parsed.origin !== origin || parsed.username || parsed.password) throw new Error("HERDR_RELAY_ALLOWED_ORIGINS requires exact HTTP(S) origins");
   }
+  const rawAgentPath = process.env.HERDR_RELAY_AGENT_PATH;
+  const agentPath = rawAgentPath === undefined ? undefined : rawAgentPath.split(":");
+  if (agentPath && (!agentPath.length || agentPath.length > 64 || agentPath.some((path) => !isAbsolute(path) || /[\x00-\x1f\x7f]/.test(path)))) throw new Error("HERDR_RELAY_AGENT_PATH requires nonempty absolute PATH entries");
   const submitKeys = list("HERDR_RELAY_SUBMIT_KEYS");
   return {
     socketPath: process.env.HERDR_SOCKET_PATH ?? join(homedir(), ".config", "herdr", "herdr.sock"),
-    relaySocketPath, stateDir, allowedOrigins,
+    relaySocketPath, stateDir, allowedOrigins, agentPath,
     pollMs: envInt("HERDR_RELAY_POLL_MS", 1500, 250),
     pollIdleMs: envInt("HERDR_RELAY_POLL_IDLE_MS", 12_000, 1000),
     readLines: envInt("HERDR_RELAY_READ_LINES", 200, 1, MAX_READ_LINES),

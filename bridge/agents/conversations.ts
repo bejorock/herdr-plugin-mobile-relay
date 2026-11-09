@@ -7,6 +7,9 @@ import type { AgentInfo } from "../herdr-client.ts";
 import type { SessionRegistry, SessionRuntime } from "../sessions.ts";
 import { findClaudeTranscriptBySessionId, readSafeClaudeTranscript } from "./claude-transcript.ts";
 import { readSafePiTranscript } from "./pi-transcript.ts";
+import { executableEvidence } from "./launcher-discovery.ts";
+import { PromptJournal, type PromptResult } from "./prompt-journal.ts";
+import { HerdrRpcError } from "../wire.ts";
 
 export class LifecycleError extends Error {
   constructor(readonly status: number, readonly code: string, message: string) { super(message); }
@@ -117,7 +120,8 @@ export const nativeConversationAccess: NativeAccess = {
 
 export class ConversationService {
   private readonly operations = new Map<string, Promise<unknown>>();
-  constructor(private readonly sessions: SessionRegistry, private readonly store: ConversationStore, private readonly nativeAccess = nativeConversationAccess) {}
+  private prompts?: PromptJournal;
+  constructor(private readonly sessions: SessionRegistry, private readonly store: ConversationStore, private readonly nativeAccess = nativeConversationAccess, private readonly agentPath?: string[]) {}
 
   runtime(name?: string): SessionRuntime {
     const runtime = this.sessions.get(name);
@@ -129,14 +133,21 @@ export class ConversationService {
     const runtime = this.runtime(name);
     try {
       const entries = await runtime.herdr.listIntegrations();
-      return { session: runtime.name, agents: (["pi", "claude"] as const).map((kind) => {
+      let running: Awaited<ReturnType<SessionRuntime["herdr"]["listAgentBindings"]>> = [];
+      try { running = await runtime.herdr.listAgentBindings(); } catch {}
+      const agents = await Promise.all((["pi", "claude"] as const).map(async (kind) => {
         const entry = entries.find((e) => e.target === kind);
-        const unavailable = entry?.available === false;
-        // Herdr's available flag is executable evidence OR an installed hook. Never conflate them.
-        const available = entry?.available === true && entry.state === "not_installed";
-        return { kind, availability: available ? "available" : unavailable ? "unavailable" : "unknown", version: null,
-          reason: available ? null : unavailable ? "executable_not_found" : "launchability_unverified" };
-      }) };
+        for (const pane of running.filter((pane) => pane.agent === kind && pane.nativeSession)) {
+          try {
+            const live = await runtime.herdr.getAgent(pane.paneId);
+            if (live.agent === kind && live.agentSession?.value === pane.nativeSession?.value && live.agentSession?.kind === pane.nativeSession?.kind && live.agentSession?.source === pane.nativeSession?.source && live.interactiveReady && !live.launchPending) return { kind, availability: "available", version: null, reason: null };
+          } catch {}
+        }
+        const inspected = this.agentPath ? await executableEvidence(kind, this.agentPath) : undefined;
+        const availability = inspected ?? (entry?.available === true && entry.state === "not_installed" ? "available" : entry?.available === false ? "unavailable" : "unknown");
+        return { kind, availability, version: null, reason: availability === "available" ? null : availability === "unavailable" ? "executable_not_found" : "launchability_unverified" };
+      }));
+      return { session: runtime.name, agents };
     } catch { throw new LifecycleError(503, "discovery_unavailable", "Herdr harness discovery is unavailable"); }
   }
   async create(input: { session?: string; kind: Kind; cwd: string; requestId: string }): Promise<Conversation> {
@@ -168,12 +179,12 @@ export class ConversationService {
     const initial = this.record(id, session);
     const canonical = await this.canonicalCwd(cwd);
     if (canonical !== initial.cwd) throw new LifecycleError(400, "cwd_mismatch", "cwd does not match the saved conversation");
-    return this.serial(`resume:${id}`, async () => {
+    return this.serial(`conversation:${id}`, async () => {
       const record = this.record(id, session);
       const runtime = this.runtime(record.session);
       if (!record.native) throw new LifecycleError(409, "create_pending", "Native creation is unresolved");
       const live = await this.findLive(runtime, record);
-      if (live) return this.attach(record, live);
+      if (live) return this.attachBinding(record, live);
       if (record.phase !== "bound") throw new LifecycleError(409, "restore_pending", "A previous restoration is unresolved; inspect its pane before retrying");
       await this.nativeAccess.validate(record.kind, record.native, record.cwd);
       // Persist uncertainty BEFORE allocating a replacement. Crash/retry cannot launch twice.
@@ -181,9 +192,46 @@ export class ConversationService {
       return this.launch(runtime, record, true);
     }, true);
   }
+  async attach(input: { session?: string; paneId: string; kind: Kind; cwd: string }): Promise<Conversation> {
+    const runtime = this.runtime(input.session);
+    const cwd = await this.canonicalCwd(input.cwd);
+    let agent: AgentInfo;
+    try { agent = await runtime.herdr.getAgent(input.paneId); }
+    catch { throw new LifecycleError(404, "agent_not_found", "Existing agent was not found"); }
+    if (agent.agent !== input.kind || !agent.agentSession || agent.agentSession.agent !== input.kind) throw new LifecycleError(409, "native_identity_mismatch", "Existing agent does not match the requested harness or has no native session");
+    if (!agent.interactiveReady || agent.launchPending) throw new LifecycleError(409, "agent_not_ready", "Existing agent is not ready for attachment");
+    if (await this.canonicalCwd(agent.cwd) !== cwd) throw new LifecycleError(400, "cwd_mismatch", "cwd does not match the existing agent");
+    return this.attachNative(runtime.name, input.paneId, input.kind, agent.agentSession);
+  }
+  async prompt(id: string, text: string, requestId: string, session?: string): Promise<PromptResult> {
+    if (typeof text !== "string" || !text.trim() || text.includes("\0") || Buffer.byteLength(text) > 128 * 1024 || !REQUEST_ID.test(requestId)) throw new LifecycleError(400, "invalid_request", "Nonempty bounded prompt text and requestId are required");
+    this.record(id, session);
+    this.prompts ??= new PromptJournal(join(this.store.path, ".."));
+    const journal = this.prompts; const hash = PromptJournal.hash(text);
+    return this.serial(`conversation:${id}`, async () => {
+      const prior = journal.prior(id, requestId, hash); if (prior) return prior;
+      const record = this.record(id, session); const runtime = this.runtime(record.session);
+      const live = await this.findLive(runtime, record);
+      if (!live || !record.native) throw new LifecycleError(409, "conversation_closed", "Resume the saved conversation explicitly before prompting");
+      journal.reserve(id, requestId, hash);
+      try {
+        await runtime.herdr.promptAgent(live.paneId, text);
+        await this.verifyNative(record.session, live.paneId, record.kind, record.native);
+      } catch (error) {
+        const code = error instanceof HerdrRpcError ? error.code : undefined;
+        if (code && ["agent_blocked", "agent_not_ready", "agent_not_found", "empty_agent_prompt"].includes(code)) {
+          const failure = new LifecycleError(409, code, "Herdr rejected prompt before delivery; inspect current agent state");
+          journal.failed(id, requestId, hash, failure); throw failure;
+        }
+        throw new LifecycleError(409, "prompt_delivery_unconfirmed", "Prompt may have been delivered; inspect transcript before any new request");
+      }
+      return journal.delivered(id, requestId, hash);
+    }, false);
+  }
   /** Bind a verified live hook to a durable conversation, without launching or prompting. */
   async attachNative(session: string, paneId: string, kind: string, native: Native): Promise<Conversation> {
     if (kind !== "pi" && kind !== "claude") throw new LifecycleError(400, "invalid_request", "Unsupported native harness");
+    return this.serial(`attach:${JSON.stringify([session, kind, native.source, native.kind, native.value])}`, async () => {
     const runtime = this.runtime(session);
     let agent: AgentInfo;
     try { agent = await runtime.herdr.getAgent(paneId); }
@@ -196,7 +244,8 @@ export class ConversationService {
     let record = this.store.byNative(session, kind, native);
     if (record && record.cwd !== cwd) throw new LifecycleError(409, "interaction_stale", "Native requester cwd changed");
     if (!record) record = { id: `conversation_${randomUUID()}`, session, kind, cwd, native, requestId: `hook:${randomUUID()}`, phase: "bound" };
-    return this.attach(record, agent);
+    return this.attachBinding(record, agent);
+    }, false);
   }
   async verifyNative(session: string, paneId: string, kind: string, native: Native): Promise<void> {
     const runtime = this.runtime(session);
@@ -243,7 +292,7 @@ export class ConversationService {
     if (!runtime || runtime.engine.current().bridge !== "connected") return this.public(record, "unavailable");
     if (!record.native) return this.public(record, "starting", record.launchPaneId ?? null);
     const live = await this.findLive(runtime, record);
-    return live ? this.attach(record, live) : this.public(record, record.phase === "bound" ? "closed" : "starting", record.launchPaneId ?? null);
+    return live ? this.attachBinding(record, live) : this.public(record, record.phase === "bound" ? "closed" : "starting", record.launchPaneId ?? null);
   }
   private matches(record: Record, agent: { agent: string | null; nativeSession?: Native }): boolean {
     return !!record.native && agent.agent === record.kind && agent.nativeSession?.source === record.native.source &&
@@ -266,7 +315,7 @@ export class ConversationService {
     if (await this.canonicalCwd(agent.cwd) !== record.cwd) throw new LifecycleError(409, "native_identity_mismatch", "Live conversation cwd differs from saved cwd");
     return { paneId: agent.paneId, workspaceId: agent.workspaceId, cwd: agent.cwd };
   }
-  private attach(record: Record, pane: { paneId: string; workspaceId: string }): Conversation {
+  private attachBinding(record: Record, pane: { paneId: string; workspaceId: string }): Conversation {
     if (record.paneId !== pane.paneId || record.phase !== "bound") {
       record.paneId = pane.paneId; record.workspaceId = pane.workspaceId; record.phase = "bound"; record.launchPaneId = undefined;
       this.store.save(record);
@@ -282,7 +331,7 @@ export class ConversationService {
     }
     if (await this.canonicalCwd(agent.cwd) !== record.cwd) throw new LifecycleError(409, "native_identity_mismatch", "Agent cwd differs from requested cwd");
     record.native = { source: native.source, kind: native.kind, value: native.value };
-    return this.attach(record, agent);
+    return this.attachBinding(record, agent);
   }
   private async launch(runtime: SessionRuntime, record: Record, restore: boolean): Promise<Conversation> {
     try {

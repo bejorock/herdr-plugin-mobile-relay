@@ -212,6 +212,26 @@ describe("HTTP transcript and event routes", () => {
   });
 });
 
+describe("HTTP attach/prompt routes", () => {
+  test("routes explicit attachment and semantic prompts without accepting native handles", async () => {
+    const calls: unknown[] = [];
+    const conversation = { id: "conversation-test", session: "default", paneId: "p1" };
+    const server = await startServer({ cfg: await cfg(), registry: {} as never, audit: { record: () => {} } as never, liveUpdates: {} as never,
+      conversations: { attach: async (input: unknown) => { calls.push(input); return conversation; }, prompt: async (...args: unknown[]) => { calls.push(args); return { ok: true, delivered: true, completion: "unknown" }; } } as never });
+    const fetch = client(server);
+    try {
+      const post = (path: string, body: unknown) => fetch("http://localhost" + path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+      expect((await post("/api/conversations/attach?session=work", { paneId: "p1", kind: "pi", cwd: "/repo" })).status).toBe(200);
+      expect(calls[0]).toEqual({ paneId: "p1", kind: "pi", cwd: "/repo", session: "work" });
+      const response = await post("/api/conversations/conversation-test/prompt?session=work", { text: "hello", requestId: "p1" });
+      expect(await response.json()).toMatchObject({ ok: true, delivered: true, completion: "unknown" });
+      expect(calls[1]).toEqual(["conversation-test", "hello", "p1", "work"]);
+      expect((await post("/api/conversations/attach", { paneId: "p1", kind: "pi", cwd: "/repo", nativeValue: "/secret" })).status).toBe(400);
+      expect((await post("/api/conversations/conversation-test/prompt", { text: "hello", requestId: "p1", args: [] })).status).toBe(400);
+    } finally { await server.stop(true); }
+  });
+});
+
 describe("HTTP conversation routes", () => {
   test("uses HTTP lifecycle bodies, selected runtime, structured errors and no client native handles", async () => {
     const calls: unknown[] = [];
